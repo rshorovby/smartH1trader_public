@@ -1,9 +1,8 @@
 #ifndef SHT_LOG_MQH
 #define SHT_LOG_MQH
 
-#include "SHT_Config.mqh"
-
-bool g_sht_log_file = true;
+bool   g_sht_log_file = true;
+string g_sht_log_name = "SmartH1Trader.log";
 
 void SHT_Log(const string level, const string msg)
 {
@@ -15,7 +14,7 @@ void SHT_Log(const string level, const string msg)
       return;
 
    const int h = FileOpen(
-      SHT_LOG_FILE,
+      g_sht_log_name,
       FILE_READ | FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_COMMON | FILE_SHARE_READ
    );
    if(h == INVALID_HANDLE)

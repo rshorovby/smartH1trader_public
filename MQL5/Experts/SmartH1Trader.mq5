@@ -56,6 +56,7 @@ void SHT_PaintComment(const string extra)
 int OnInit()
 {
    g_sht_log_file = InpLogToFile;
+   g_sht_log_name = SHT_LOG_FILE;
    g_last_bar     = 0;
    g_last_ui      = 0;
    g_chart_ok     = false;
