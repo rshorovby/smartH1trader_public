@@ -1,6 +1,6 @@
 #property copyright   "rshorovby"
 #property link        "https://github.com/rshorovby/smartH1trader_public"
-#property version     "0.3.0"
+#property version     "0.30"
 #property description "Personal XAUUSD H1 EA. Vegas shadow entries/exits; no broker orders."
 
 #include "../Include/SHT_Config.mqh"

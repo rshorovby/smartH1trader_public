@@ -187,8 +187,8 @@ void SHT_Manage(const datetime t, const double high, const double low,
 
    if(g_pos_side > 0)
    {
-      const double tp1   = g_pos_entry + SHT_TP1_R * g_pos_rdist;
-      const double final = g_pos_entry + SHT_RR    * g_pos_rdist;
+      const double tp1    = g_pos_entry + SHT_TP1_R * g_pos_rdist;
+      const double tp_end = g_pos_entry + SHT_RR    * g_pos_rdist;
       if(high >= tp1)
          g_pos_tp1 = true;
       if(SHT_USE_BE && g_pos_tp1)
@@ -202,16 +202,16 @@ void SHT_Manage(const datetime t, const double high, const double low,
       }
       if(g_pos_rem > 1e-12)
       {
-         if(!g_pos_ride && high >= final)
-            SHT_ShadowClose(t, final, "tp_final");
+         if(!g_pos_ride && high >= tp_end)
+            SHT_ShadowClose(t, tp_end, "tp_final");
          else if(low <= g_pos_stop)
             SHT_ShadowClose(t, g_pos_stop, g_pos_tp1 ? "trail" : "stop");
       }
    }
    else
    {
-      const double tp1   = g_pos_entry - SHT_TP1_R * g_pos_rdist;
-      const double final = g_pos_entry - SHT_RR    * g_pos_rdist;
+      const double tp1    = g_pos_entry - SHT_TP1_R * g_pos_rdist;
+      const double tp_end = g_pos_entry - SHT_RR    * g_pos_rdist;
       if(low <= tp1)
          g_pos_tp1 = true;
       if(SHT_USE_BE && g_pos_tp1)
@@ -225,8 +225,8 @@ void SHT_Manage(const datetime t, const double high, const double low,
       }
       if(g_pos_rem > 1e-12)
       {
-         if(!g_pos_ride && low <= final)
-            SHT_ShadowClose(t, final, "tp_final");
+         if(!g_pos_ride && low <= tp_end)
+            SHT_ShadowClose(t, tp_end, "tp_final");
          else if(high >= g_pos_stop)
             SHT_ShadowClose(t, g_pos_stop, g_pos_tp1 ? "trail" : "stop");
       }
