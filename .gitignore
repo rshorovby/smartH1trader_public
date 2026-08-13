@@ -1,0 +1,11 @@
+# Compiled MetaTrader binaries are not proof of authorship.
+*.ex4
+*.ex5
+*.exh
+
+# Local tester / terminal junk
+*.log
+*.dat
+*.set
+.DS_Store
+Thumbs.db
