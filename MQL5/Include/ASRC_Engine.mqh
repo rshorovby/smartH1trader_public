@@ -3,6 +3,7 @@
 
 #include "ASRC_Config.mqh"
 #include "SHT_Log.mqh"
+#include "SHT_Risk.mqh"
 #include "ASRC_Channel.mqh"
 
 // Alpha S/R Channel — same numbers as backtest_alpha_sr_channel.py (BTC tick 0.01).
@@ -35,6 +36,8 @@ struct ASRCLeg
    double   sl;
    double   tp;
    double   risk;
+   double   lots;
+   double   risk_money;
 };
 
 ASRCLeg  g_asrc_legs[ASRC_MAX_LEGS];
@@ -61,6 +64,22 @@ int ASRC_SameSideCount(const int side)
       if(g_asrc_legs[i].on && g_asrc_legs[i].side == side)
          n++;
    return n;
+}
+
+double ASRC_NowFloating()
+{
+   const double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double f = 0.0;
+   for(int i = 0; i < ASRC_MAX_LEGS; i++)
+   {
+      if(!g_asrc_legs[i].on || g_asrc_legs[i].risk <= 0.0 || g_asrc_legs[i].risk_money <= 0.0)
+         continue;
+      const double r = (g_asrc_legs[i].side > 0)
+                       ? (bid - g_asrc_legs[i].entry) / g_asrc_legs[i].risk
+                       : (g_asrc_legs[i].entry - bid) / g_asrc_legs[i].risk;
+      f += r * g_asrc_legs[i].risk_money;
+   }
+   return f;
 }
 
 void ASRC_LegsClear()
@@ -222,6 +241,8 @@ void ASRC_ShadowClose(const int idx, const datetime t, const double px, const st
    const double r = (leg.side > 0)
                     ? (px - leg.entry) / leg.risk
                     : (leg.entry - px) / leg.risk;
+   if(!g_asrc_replay && leg.risk_money > 0.0)
+      SHT_RiskAddPnl(r * leg.risk_money);
    g_asrc_closed_n++;
    ASRC_Mark("X" + IntegerToString(leg.id), t, px, 251,
              (r > 0.0 ? clrLimeGreen : clrOrangeRed));
@@ -231,7 +252,8 @@ void ASRC_ShadowClose(const int idx, const datetime t, const double px, const st
                + " " + reason
                + " exit=" + DoubleToString(px, _Digits)
                + " R=" + DoubleToString(r, 3)
-               + " which=" + IntegerToString(leg.which));
+               + " which=" + IntegerToString(leg.which)
+               + " lots=" + DoubleToString(leg.lots, 2));
    else
       SHT_Info("replay close #" + IntegerToString(leg.id)
                + " " + (leg.side > 0 ? "long" : "short")
@@ -318,17 +340,28 @@ void ASRC_ShadowOpen(const ASRCSnap &s, const int side, const int which, const d
                      ? s.close + ASRC_RR * risk
                      : s.close - ASRC_RR * risk;
 
+   double lots = 0.0;
+   if(!SHT_RiskCanEnter(s.bar_time, g_asrc_replay, risk, ASRC_NowFloating(), lots))
+   {
+      if(!g_asrc_replay)
+         SHT_Info("skip " + (side > 0 ? "long" : "short") + ": " + g_risk_why);
+      return;
+   }
+
+   const double eq = AccountInfoDouble(ACCOUNT_EQUITY);
    g_asrc_trade_id++;
-   g_asrc_legs[slot].on       = true;
-   g_asrc_legs[slot].side     = side;
-   g_asrc_legs[slot].which    = which;
-   g_asrc_legs[slot].id       = g_asrc_trade_id;
-   g_asrc_legs[slot].bar_time = s.bar_time;
-   g_asrc_legs[slot].entry    = s.close;
-   g_asrc_legs[slot].sl       = sl;
-   g_asrc_legs[slot].tp       = tp;
-   g_asrc_legs[slot].risk     = risk;
-   g_asrc_last_entry          = s.bar_time;
+   g_asrc_legs[slot].on         = true;
+   g_asrc_legs[slot].side       = side;
+   g_asrc_legs[slot].which      = which;
+   g_asrc_legs[slot].id         = g_asrc_trade_id;
+   g_asrc_legs[slot].bar_time   = s.bar_time;
+   g_asrc_legs[slot].entry      = s.close;
+   g_asrc_legs[slot].sl         = sl;
+   g_asrc_legs[slot].tp         = tp;
+   g_asrc_legs[slot].risk       = risk;
+   g_asrc_legs[slot].lots       = lots;
+   g_asrc_legs[slot].risk_money = eq * g_risk_pct;
+   g_asrc_last_entry            = s.bar_time;
    if(which == 1)
       g_asrc_session_n++;
 
@@ -345,7 +378,8 @@ void ASRC_ShadowOpen(const ASRCSnap &s, const int side, const int which, const d
             + " entry=" + DoubleToString(s.close, _Digits)
             + " sl=" + DoubleToString(sl, _Digits)
             + " tp=" + DoubleToString(tp, _Digits)
-            + " r=" + DoubleToString(risk, _Digits));
+            + " r=" + DoubleToString(risk, _Digits)
+            + " lots=" + DoubleToString(lots, 2));
 }
 
 bool ASRC_EngineOnBar(const int shift, const bool replay)
@@ -361,6 +395,8 @@ bool ASRC_EngineOnBar(const int shift, const bool replay)
    const double low  = iLow(_Symbol, PERIOD_M5, shift);
    if(t <= 0)
       return false;
+
+   SHT_RiskOnBar(t);
 
    if(s.session_reset)
       g_asrc_session_n = 0;
@@ -439,6 +475,7 @@ int ASRC_EngineReplay()
          ok++;
    }
    g_asrc_replay = false;
+   SHT_RiskResetDay(TimeCurrent());
    ASRC_LevelsDraw();
    ChartRedraw(0);
    SHT_Info("replay bars=" + IntegerToString(ok)
@@ -464,6 +501,7 @@ string ASRC_PosLine()
               + " @" + DoubleToString(g_asrc_legs[i].entry, _Digits)
               + " sl=" + DoubleToString(g_asrc_legs[i].sl, _Digits)
               + " tp=" + DoubleToString(g_asrc_legs[i].tp, _Digits)
+              + " lots=" + DoubleToString(g_asrc_legs[i].lots, 2)
               + " w" + IntegerToString(g_asrc_legs[i].which);
    }
    return line + "  closed=" + IntegerToString(g_asrc_closed_n)
@@ -474,7 +512,8 @@ string ASRC_EngineComment(const ASRCSnap &s)
 {
    return ASRC_Line(s)
           + "\n" + ASRC_PosLine()
-          + "\nshadow only — no OrderSend";
+          + "\n" + SHT_RiskLine(ASRC_NowFloating())
+          + "\nshadow only — no OrderSend  halt local (not shared with Vegas)";
 }
 
 #endif

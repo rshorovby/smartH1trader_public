@@ -12,7 +12,7 @@ This repository is the source of truth for the live bots. Research, broker dumps
 
 ### AsrcBtc — Alpha S/R Channel BTCUSD M5
 
-**v0.30 — shadow entries, no broker orders.** Engulf or pin+sweep, SL = channel ±500 ticks, TP 3R, EOD flatten 17:00 NY, max 2 first-legs per session, optional same-side add-on, min 4 M5 bars between entries. Friday and 16:45–19:05 NY blocked. Magic `26081302`. Keep `InpEnableTrading = false`.
+**v0.40 — shadow + 0.5% risk, local −2% daily halt.** Same entries as v0.30. Lot size from stop distance. Halt skips new legs only (does not flatten). Halt is **not** shared with Vegas — do not run both live without a combined cap. Magic `26081302`. Keep `InpEnableTrading = false`.
 
 ## Layout
 
@@ -41,7 +41,7 @@ Relative includes (`../Include/...`) resolve when the repo tree is copied as-is 
 3. In EA inputs set `InpEnableTrading = true`. Re-attach. Experts should log `LIVE ORDERS ARMED`.
 4. Comment says `trading LIVE`. The next H1 signal can place a real order. SL is on the broker even if Wine/MT5 dies.
 
-Leave `InpEnableTrading = false` to stay in shadow mode. **AsrcBtc must stay false** until risk, news, and live layers exist.
+Leave `InpEnableTrading = false` to stay in shadow mode. **AsrcBtc must stay false** until news and live layers exist.
 
 ## Roadmap
 
@@ -51,7 +51,7 @@ ASRC BTCUSD M5:
 
 1. Scaffold
 2. M15 channel + M5/H1 filters
-3. Shadow entries / SL / TP *(this version)*
-4. Risk 0.5% + daily halt (shared account halt comes later)
+3. Shadow entries / SL / TP
+4. Risk 0.5% + daily halt (shared account halt comes later) *(this version)*
 5. USD news window
 6. Broker orders

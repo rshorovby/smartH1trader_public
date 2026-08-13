@@ -1,10 +1,11 @@
 #property copyright   "rshorovby"
 #property link        "https://github.com/rshorovby/smartH1trader_public"
-#property version     "0.30"
-#property description "Personal BTCUSD M5 EA. ASRC shadow entries; no broker orders."
+#property version     "0.40"
+#property description "Personal BTCUSD M5 EA. ASRC shadow + 0.5% risk; no broker orders."
 
 #include "../Include/ASRC_Config.mqh"
 #include "../Include/SHT_Log.mqh"
+#include "../Include/SHT_Risk.mqh"
 #include "../Include/ASRC_Channel.mqh"
 #include "../Include/ASRC_Engine.mqh"
 
@@ -12,8 +13,12 @@ input group "Safety"
 input string          InpAllowedSymbol  = "BTCUSD";
 input ENUM_TIMEFRAMES InpAllowedTF      = PERIOD_M5;
 input long            InpMagic          = 26081302;
-input bool            InpEnableTrading  = false;   // v0.30 never sends orders
+input bool            InpEnableTrading  = false;   // v0.40 never sends orders
 input bool            InpLogToFile      = true;
+
+input group "Risk"
+input double          InpRiskPct        = 0.5;     // percent of equity per leg
+input double          InpDailyHaltPct   = 2.0;     // halt new entries (local to this EA)
 
 datetime g_last_bar    = 0;
 datetime g_last_ui     = 0;
@@ -80,6 +85,19 @@ int OnInit()
       return INIT_FAILED;
    }
 
+   if(InpRiskPct <= 0.0 || InpRiskPct > 2.0)
+   {
+      SHT_Error("InpRiskPct must be in (0, 2]");
+      return INIT_FAILED;
+   }
+   if(InpDailyHaltPct < InpRiskPct)
+   {
+      SHT_Error("InpDailyHaltPct must be >= InpRiskPct");
+      return INIT_FAILED;
+   }
+   g_risk_pct       = InpRiskPct / 100.0;
+   g_daily_halt_pct = InpDailyHaltPct / 100.0;
+
    if(!ASRC_Init(_Symbol))
    {
       SHT_Error("failed to create ASRC indicator handles");
@@ -88,11 +106,12 @@ int OnInit()
    }
 
    if(InpEnableTrading)
-      SHT_Warn("InpEnableTrading=true but v0.30 has no OrderSend - shadow only");
+      SHT_Warn("InpEnableTrading=true but v0.40 has no OrderSend - shadow only");
 
    g_chart_ok = true;
    ASRC_Paint("handles created, waiting for M15/H1 warmup then replay");
-   SHT_Info("ASRC shadow engine ready - engulf/pin, SL channel+/-500 ticks, TP 3R, EOD 17:00 NY");
+   SHT_Info("ASRC risk " + DoubleToString(InpRiskPct, 2) + "% per leg, local halt -"
+            + DoubleToString(InpDailyHaltPct, 1) + "% (not shared with Vegas)");
    return INIT_SUCCEEDED;
 }
 
