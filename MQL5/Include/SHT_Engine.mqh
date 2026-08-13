@@ -6,6 +6,7 @@
 #include "SHT_Vegas.mqh"
 #include "SHT_Risk.mqh"
 #include "SHT_News.mqh"
+#include "SHT_Exec.mqh"
 
 // Vegas Channel Tunnel v1.1 — same numbers as the Python backtest.
 #define SHT_RR           3.0
@@ -122,6 +123,11 @@ void SHT_ShadowFill(const double px, const double frac, const string tag)
 
 void SHT_ShadowClose(const datetime t, const double px, const string reason)
 {
+   if(g_live && !g_replay)
+   {
+      if(!SHT_ExecClose())
+         return;
+   }
    if(g_pos_rem > 1e-12)
       SHT_ShadowFill(px, g_pos_rem, reason);
    g_closed_n++;
@@ -155,13 +161,37 @@ void SHT_ShadowOpen(const datetime t, const double close_px, const double atr,
    if(sl_dist <= 0.0 || lots <= 0.0)
       return;
 
+   double entry_px = close_px;
+   double sl_use   = sl;
+   if(g_live && !g_replay)
+   {
+      const double tp_send = ride ? 0.0
+                                  : (side > 0 ? close_px + SHT_RR * sl_dist
+                                              : close_px - SHT_RR * sl_dist);
+      if(!SHT_ExecOpen(side, lots, sl, tp_send))
+         return;
+      for(int w = 0; w < 20 && !SHT_ExecHasPos(); w++)
+         Sleep(50);
+      if(!SHT_ExecHasPos())
+      {
+         SHT_Error("LIVE open sent but no position appeared");
+         return;
+      }
+      entry_px = SHT_ExecPrice();
+      const double filled_dist = MathAbs(entry_px - sl);
+      if(filled_dist > 0.0)
+         sl_use = sl;
+   }
+
    g_trade_id++;
    g_pos_on     = true;
    g_pos_side   = side;
    g_pos_time   = t;
-   g_pos_entry  = close_px;
-   g_pos_rdist  = sl_dist;
-   g_pos_stop   = sl;
+   g_pos_entry  = entry_px;
+   g_pos_rdist  = MathAbs(entry_px - sl_use);
+   if(g_pos_rdist <= 0.0)
+      g_pos_rdist = sl_dist;
+   g_pos_stop   = sl_use;
    g_pos_tp1    = false;
    g_pos_scaled = false;
    g_pos_ride   = ride;
@@ -171,15 +201,23 @@ void SHT_ShadowOpen(const datetime t, const double close_px, const double atr,
    g_pos_eq     = AccountInfoDouble(ACCOUNT_EQUITY);
    g_pos_risk_money = g_pos_eq * g_risk_pct;
 
-   SHT_Mark("E" + IntegerToString(g_trade_id), t, close_px,
+   if(g_live && !g_replay && !ride)
+   {
+      const double tp_adj = (side > 0)
+                            ? g_pos_entry + SHT_RR * g_pos_rdist
+                            : g_pos_entry - SHT_RR * g_pos_rdist;
+      SHT_ExecModify(g_pos_stop, tp_adj);
+   }
+
+   SHT_Mark("E" + IntegerToString(g_trade_id), t, g_pos_entry,
             (side > 0 ? 233 : 234),
             (side > 0 ? clrDodgerBlue : clrOrchid));
-   SHT_Info((g_replay ? "replay " : "")
-            + "shadow open #" + IntegerToString(g_trade_id)
+   SHT_Info((g_replay ? "replay " : (g_live ? "LIVE " : "shadow "))
+            + "open #" + IntegerToString(g_trade_id)
             + " " + (side > 0 ? "long" : "short")
-            + " entry=" + DoubleToString(close_px, _Digits)
-            + " sl=" + DoubleToString(sl, _Digits)
-            + " r=" + DoubleToString(sl_dist, _Digits)
+            + " entry=" + DoubleToString(g_pos_entry, _Digits)
+            + " sl=" + DoubleToString(g_pos_stop, _Digits)
+            + " r=" + DoubleToString(g_pos_rdist, _Digits)
             + " lots=" + DoubleToString(lots, 2)
             + (ride ? " ride" : ""));
    if(!g_replay)
@@ -215,10 +253,23 @@ void SHT_Manage(const datetime t, const double high, const double low,
          g_pos_stop = MathMax(g_pos_stop, close_px - atr * SHT_TRAIL_ATR);
       if(do_partial && !g_pos_scaled && high >= tp1)
       {
-         SHT_ShadowFill(tp1, SHT_SCALE, "tp1");
-         g_pos_scaled = true;
+         if(g_live && !g_replay)
+         {
+            if(SHT_ExecCloseFrac(SHT_SCALE))
+               SHT_ShadowFill(tp1, SHT_SCALE, "tp1");
+            else
+               SHT_Info("LIVE skip partial (lot too small) - keep full size");
+            g_pos_scaled = true;
+         }
+         else
+         {
+            SHT_ShadowFill(tp1, SHT_SCALE, "tp1");
+            g_pos_scaled = true;
+         }
       }
-      if(g_pos_rem > 1e-12)
+      if(g_live && !g_replay)
+         SHT_ExecModify(g_pos_stop, g_pos_ride ? 0.0 : tp_end);
+      else if(g_pos_rem > 1e-12)
       {
          if(!g_pos_ride && high >= tp_end)
             SHT_ShadowClose(t, tp_end, "tp_final");
@@ -238,10 +289,23 @@ void SHT_Manage(const datetime t, const double high, const double low,
          g_pos_stop = MathMin(g_pos_stop, close_px + atr * SHT_TRAIL_ATR);
       if(do_partial && !g_pos_scaled && low <= tp1)
       {
-         SHT_ShadowFill(tp1, SHT_SCALE, "tp1");
-         g_pos_scaled = true;
+         if(g_live && !g_replay)
+         {
+            if(SHT_ExecCloseFrac(SHT_SCALE))
+               SHT_ShadowFill(tp1, SHT_SCALE, "tp1");
+            else
+               SHT_Info("LIVE skip partial (lot too small) - keep full size");
+            g_pos_scaled = true;
+         }
+         else
+         {
+            SHT_ShadowFill(tp1, SHT_SCALE, "tp1");
+            g_pos_scaled = true;
+         }
       }
-      if(g_pos_rem > 1e-12)
+      if(g_live && !g_replay)
+         SHT_ExecModify(g_pos_stop, g_pos_ride ? 0.0 : tp_end);
+      else if(g_pos_rem > 1e-12)
       {
          if(!g_pos_ride && low <= tp_end)
             SHT_ShadowClose(t, tp_end, "tp_final");
@@ -371,6 +435,105 @@ int SHT_EngineReplay()
    return ok;
 }
 
+void SHT_PaperDrop(const string why)
+{
+   if(!g_pos_on)
+      return;
+   SHT_Info("drop paper position: " + why);
+   g_pos_on     = false;
+   g_pos_side   = 0;
+   g_pos_rem    = 1.0;
+   g_pos_R      = 0.0;
+   g_pos_tp1    = false;
+   g_pos_scaled = false;
+   g_pos_ride   = false;
+   g_pos_lots   = 0.0;
+   SHT_LevelsClear();
+}
+
+void SHT_LiveAfterReplay()
+{
+   if(!g_live)
+      return;
+   if(SHT_ExecHasPos())
+   {
+      g_pos_on     = true;
+      g_pos_side   = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 1 : -1;
+      g_pos_entry  = PositionGetDouble(POSITION_PRICE_OPEN);
+      g_pos_stop   = PositionGetDouble(POSITION_SL);
+      g_pos_rdist  = MathAbs(g_pos_entry - g_pos_stop);
+      if(g_pos_rdist <= 0.0)
+         g_pos_rdist = g_pos_entry * 0.002;
+      g_pos_lots   = PositionGetDouble(POSITION_VOLUME);
+      g_open_lots  = g_pos_lots;
+      g_pos_time   = (datetime)PositionGetInteger(POSITION_TIME);
+      g_pos_ride   = (PositionGetDouble(POSITION_TP) <= 0.0);
+      g_pos_tp1    = false;
+      g_pos_scaled = false;
+      g_pos_rem    = 1.0;
+      g_pos_R      = 0.0;
+      g_pos_eq     = AccountInfoDouble(ACCOUNT_EQUITY);
+      g_pos_risk_money = g_pos_eq * g_risk_pct;
+      g_trade_id++;
+      SHT_Warn("adopted existing LIVE position lots=" + DoubleToString(g_pos_lots, 2)
+               + (g_pos_ride ? " ride" : ""));
+      SHT_LevelsDraw();
+      return;
+   }
+   if(g_pos_on)
+      SHT_PaperDrop("replay paper was not sent to the broker");
+}
+
+void SHT_LiveTick()
+{
+   if(!g_live || g_replay || !g_pos_on)
+      return;
+
+   if(!SHT_ExecHasPos())
+   {
+      const double px = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      SHT_ShadowClose(TimeCurrent(), px, "broker_exit");
+      return;
+   }
+
+   const double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   const double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   const bool do_partial = SHT_USE_PARTIAL && !g_pos_ride;
+
+   if(g_pos_side > 0)
+   {
+      const double tp1    = g_pos_entry + SHT_TP1_R * g_pos_rdist;
+      const double tp_end = g_pos_entry + SHT_RR    * g_pos_rdist;
+      if(bid >= tp1)
+         g_pos_tp1 = true;
+      if(SHT_USE_BE && g_pos_tp1)
+         g_pos_stop = MathMax(g_pos_stop, g_pos_entry);
+      if(do_partial && !g_pos_scaled && bid >= tp1)
+      {
+         if(SHT_ExecCloseFrac(SHT_SCALE))
+            SHT_ShadowFill(tp1, SHT_SCALE, "tp1");
+         g_pos_scaled = true;
+      }
+      SHT_ExecModify(g_pos_stop, g_pos_ride ? 0.0 : tp_end);
+   }
+   else
+   {
+      const double tp1    = g_pos_entry - SHT_TP1_R * g_pos_rdist;
+      const double tp_end = g_pos_entry - SHT_RR    * g_pos_rdist;
+      if(ask <= tp1)
+         g_pos_tp1 = true;
+      if(SHT_USE_BE && g_pos_tp1)
+         g_pos_stop = MathMin(g_pos_stop, g_pos_entry);
+      if(do_partial && !g_pos_scaled && ask <= tp1)
+      {
+         if(SHT_ExecCloseFrac(SHT_SCALE))
+            SHT_ShadowFill(tp1, SHT_SCALE, "tp1");
+         g_pos_scaled = true;
+      }
+      SHT_ExecModify(g_pos_stop, g_pos_ride ? 0.0 : tp_end);
+   }
+}
+
 string SHT_EngineComment(const SHTVegasSnap &snap)
 {
    string pos = "flat";
@@ -390,7 +553,7 @@ string SHT_EngineComment(const SHTVegasSnap &snap)
           + "\n" + pos
           + "\n" + SHT_RiskLine(SHT_NowFloating())
           + "\n" + SHT_NewsLine()
-          + "\nshadow only — no OrderSend";
+          + "\n" + (g_live ? "LIVE orders" : "shadow only — no OrderSend");
 }
 
 #endif

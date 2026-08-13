@@ -1,21 +1,23 @@
 #property copyright   "rshorovby"
 #property link        "https://github.com/rshorovby/smartH1trader_public"
-#property version     "0.50"
-#property description "Personal XAUUSD H1 EA. Vegas shadow, 0.5% risk, USD news window; no broker orders."
+#property version     "0.60"
+#property description "Personal XAUUSD H1 EA. Vegas live orders behind InpEnableTrading."
 
 #include "../Include/SHT_Config.mqh"
 #include "../Include/SHT_Log.mqh"
 #include "../Include/SHT_Vegas.mqh"
 #include "../Include/SHT_Risk.mqh"
 #include "../Include/SHT_News.mqh"
+#include "../Include/SHT_Exec.mqh"
 #include "../Include/SHT_Engine.mqh"
 
 input group "Safety"
 input string          InpAllowedSymbol  = "XAUUSD";
 input ENUM_TIMEFRAMES InpAllowedTF      = PERIOD_H1;
 input long            InpMagic          = 26081301;
-input bool            InpEnableTrading  = false;   // v0.50 still never sends orders
+input bool            InpEnableTrading  = false;   // true = real orders (SL on broker)
 input bool            InpLogToFile      = true;
+input int             InpDeviation      = 50;      // max slippage in points
 
 input group "Risk"
 input double          InpRiskPct        = 0.5;     // percent of equity per trade
@@ -46,7 +48,7 @@ void SHT_PaintComment(const string extra)
    Comment(
       "SmartH1Trader " + SHT_VERSION + "\n"
       + "symbol " + _Symbol + "  " + EnumToString((ENUM_TIMEFRAMES)_Period) + "\n"
-      + "trading " + (InpEnableTrading ? "ON" : "OFF") + "  orders blocked\n"
+      + "trading " + (g_live ? "LIVE" : "OFF") + "\n"
       + extra
    );
 }
@@ -68,7 +70,7 @@ int OnInit()
 
    if(!SymbolIsAllowed())
    {
-      SHT_Error("refusing chart " + _Symbol + " — allowed prefix is " + InpAllowedSymbol);
+      SHT_Error("refusing chart " + _Symbol + " - allowed prefix is " + InpAllowedSymbol);
       return INIT_FAILED;
    }
 
@@ -109,7 +111,7 @@ int OnInit()
    }
    if(InpNewsHoldHours < 0 || InpNewsHoldHours > 24)
    {
-      SHT_Error("InpNewsHoldHours must be 0–24");
+      SHT_Error("InpNewsHoldHours must be 0-24");
       SHT_VegasRelease();
       return INIT_FAILED;
    }
@@ -117,12 +119,21 @@ int OnInit()
    g_news_buffer_sec = InpNewsBufferMin * 60;
    g_news_hold_sec   = InpNewsHoldHours * 3600;
 
-   if(InpEnableTrading)
-      SHT_Warn("InpEnableTrading=true but v0.50 is shadow-only — orders stay blocked");
+   SHT_ExecInit(InpMagic, InpDeviation, InpEnableTrading);
+   if(g_live && !SHT_ExecAllowed())
+   {
+      SHT_Error("live trading requested but " + g_risk_why);
+      SHT_VegasRelease();
+      return INIT_FAILED;
+   }
+   if(g_live)
+      SHT_Warn("LIVE ORDERS ARMED - broker SL/TP, 0.5% risk, news flatten");
+   else
+      SHT_Info("shadow mode - set InpEnableTrading=true to send orders");
 
    g_chart_ok = true;
    SHT_PaintComment("waiting for indicator warmup, then history replay");
-   SHT_Info("vegas handles ready — shadow engine, no OrderSend");
+   SHT_Info("vegas handles ready");
    return INIT_SUCCEEDED;
 }
 
@@ -158,12 +169,14 @@ void OnTick()
       SHT_EngineReplay();
       g_replay_done = true;
       g_last_bar = iTime(_Symbol, InpAllowedTF, 0);
+      SHT_LiveAfterReplay();
       SHT_NewsPoll();
       SHT_RefreshComment();
       return;
    }
 
    SHT_NewsPoll();
+   SHT_LiveTick();
 
    // News window is minutes, not hours — flatten on tick, not on H1 close.
    if(g_pos_on && SHT_NewsShouldFlatten(g_pos_time, TimeCurrent()))
