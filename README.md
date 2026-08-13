@@ -6,9 +6,7 @@ This repository is the source of truth for the live bot. Research, broker dumps,
 
 ## Current status
 
-**v0.2.0 — Vegas indicators, no orders.** The EA attaches to **XAUUSD H1**, computes EMA 8 / 55·89 / 576·676, ATR(14) and ADX(14), and prints a snapshot on each new H1 bar (chart comment + Experts log). It does **not** place, modify, or close orders.
-
-Intended strategy (entries not compiled in yet): Vegas Channel Tunnel on XAUUSD H1.
+**v0.3.0 — Vegas shadow engine, no broker orders.** On attach the EA replays closed XAUUSD H1 bars, then on each new hour it evaluates the just-closed bar: tunnel arm → retrace entry, ATR×2 stop, TP1 1.5R (50%), final 3R, BE + ATR×3 trail, ADX regime / ride. Signals are logged and marked on the chart. `OrderSend` is still not compiled in.
 
 ## Layout
 
@@ -17,6 +15,7 @@ MQL5/Experts/SmartH1Trader.mq5   // expert
 MQL5/Include/SHT_Config.mqh      // constants
 MQL5/Include/SHT_Log.mqh         // journal + file logger
 MQL5/Include/SHT_Vegas.mqh       // EMA tunnel / ATR / ADX
+MQL5/Include/SHT_Engine.mqh      // shadow entries / exits
 ```
 
 ## Compile (FundingPips MT5)
@@ -28,10 +27,17 @@ MQL5/Include/SHT_Vegas.mqh       // EMA tunnel / ATR / ADX
 
 Relative includes (`../Include/...`) resolve when the repo tree is copied as-is into the terminal `MQL5` directory.
 
+## What you should see after attach
+
+- Experts: `replay bars=... closed=N` (N should be in the same ballpark as the Python backtest on this history).
+- Chart: entry/exit arrows; if a shadow position is open, SL / TP1 / TP lines.
+- Comment: `arm L/S`, `flat` or `LONG/SHORT #id`, `shadow only — no OrderSend`.
+- Trade tab: still empty.
+
 ## Roadmap
 
 1. Scaffold: symbol, magic, kill switch, logs.
-2. Vegas indicators: EMA 8 / 55·89 / 576·676, ATR, ADX. *(this version)*
-3. Entries, stop, take-profit / trail.
+2. Vegas indicators: EMA 8 / 55·89 / 576·676, ATR, ADX.
+3. Entries, stop, take-profit / trail. *(this version, shadow)*
 4. Risk 0.5% equity per trade and daily halt.
 5. High-impact news window.

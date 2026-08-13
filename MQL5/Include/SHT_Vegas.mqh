@@ -41,13 +41,13 @@ int g_h_ms   = INVALID_HANDLE;
 int g_h_atr  = INVALID_HANDLE;
 int g_h_adx  = INVALID_HANDLE;
 
-bool SHT_Copy1(const int handle, const int buffer, double &out)
+bool SHT_CopyAt(const int handle, const int buffer, const int shift, double &out)
 {
    double a[];
    ArraySetAsSeries(a, true);
    if(handle == INVALID_HANDLE)
       return false;
-   if(CopyBuffer(handle, buffer, 0, 1, a) < 1)
+   if(CopyBuffer(handle, buffer, shift, 1, a) < 1)
       return false;
    if(a[0] == EMPTY_VALUE || !MathIsValidNumber(a[0]))
       return false;
@@ -98,20 +98,20 @@ bool SHT_VegasReady()
    );
 }
 
-bool SHT_VegasRead(SHTVegasSnap &s)
+bool SHT_VegasRead(SHTVegasSnap &s, const int shift)
 {
    s.valid = false;
 
-   if(!SHT_Copy1(g_h_trig, 0, s.ema_trig)) return false;
-   if(!SHT_Copy1(g_h_tf,   0, s.ema_tf))   return false;
-   if(!SHT_Copy1(g_h_ts,   0, s.ema_ts))   return false;
-   if(!SHT_Copy1(g_h_ms,   0, s.ema_ms))   return false;
-   if(!SHT_Copy1(g_h_atr,  0, s.atr))      return false;
-   if(!SHT_Copy1(g_h_adx,  0, s.adx))      return false;
+   if(!SHT_CopyAt(g_h_trig, 0, shift, s.ema_trig)) return false;
+   if(!SHT_CopyAt(g_h_tf,   0, shift, s.ema_tf))   return false;
+   if(!SHT_CopyAt(g_h_ts,   0, shift, s.ema_ts))   return false;
+   if(!SHT_CopyAt(g_h_ms,   0, shift, s.ema_ms))   return false;
+   if(!SHT_CopyAt(g_h_atr,  0, shift, s.atr))      return false;
+   if(!SHT_CopyAt(g_h_adx,  0, shift, s.adx))      return false;
 
    double mf[];
    ArraySetAsSeries(mf, true);
-   if(CopyBuffer(g_h_mf, 0, 0, SHT_SLOPE_LEN + 1, mf) < SHT_SLOPE_LEN + 1)
+   if(CopyBuffer(g_h_mf, 0, shift, SHT_SLOPE_LEN + 1, mf) < SHT_SLOPE_LEN + 1)
       return false;
    if(mf[0] == EMPTY_VALUE || mf[SHT_SLOPE_LEN] == EMPTY_VALUE)
       return false;

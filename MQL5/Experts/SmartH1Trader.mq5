@@ -1,25 +1,26 @@
 #property copyright   "rshorovby"
 #property link        "https://github.com/rshorovby/smartH1trader_public"
-#property version     "0.2.0"
-#property description "Personal XAUUSD H1 EA. Vegas indicators live; no orders yet."
+#property version     "0.3.0"
+#property description "Personal XAUUSD H1 EA. Vegas shadow entries/exits; no broker orders."
 
 #include "../Include/SHT_Config.mqh"
 #include "../Include/SHT_Log.mqh"
 #include "../Include/SHT_Vegas.mqh"
+#include "../Include/SHT_Engine.mqh"
 
 input group "Safety"
 input string          InpAllowedSymbol  = "XAUUSD";
 input ENUM_TIMEFRAMES InpAllowedTF      = PERIOD_H1;
 input long            InpMagic          = 26081301;
-input bool            InpEnableTrading  = false;   // kill switch; v0.2 never sends orders
+input bool            InpEnableTrading  = false;   // v0.3 still never sends orders
 input bool            InpLogToFile      = true;
 
-datetime g_last_bar = 0;
-bool     g_chart_ok = false;
+datetime g_last_bar    = 0;
+bool     g_chart_ok    = false;
+bool     g_replay_done = false;
 
 bool SymbolIsAllowed()
 {
-   // Prefix match so broker suffixes (XAUUSD.r, XAUUSD.s) still pass.
    return (StringFind(_Symbol, InpAllowedSymbol) == 0);
 }
 
@@ -43,6 +44,7 @@ int OnInit()
    g_sht_log_file = InpLogToFile;
    g_last_bar     = 0;
    g_chart_ok     = false;
+   g_replay_done  = false;
    Comment("");
 
    SHT_Info("SmartH1Trader " + SHT_VERSION + " init"
@@ -72,11 +74,11 @@ int OnInit()
    }
 
    if(InpEnableTrading)
-      SHT_Warn("InpEnableTrading=true but v0.2 has no entries — orders stay blocked");
+      SHT_Warn("InpEnableTrading=true but v0.3 is shadow-only — orders stay blocked");
 
    g_chart_ok = true;
-   SHT_PaintComment("vegas handles created, waiting for warmup");
-   SHT_Info("vegas handles ready: EMA 8/55/89/576/676 ATR14 ADX14 — no OrderSend");
+   SHT_PaintComment("waiting for indicator warmup, then history replay");
+   SHT_Info("vegas handles ready — shadow engine, no OrderSend");
    return INIT_SUCCEEDED;
 }
 
@@ -92,28 +94,44 @@ void OnTick()
    if(!g_chart_ok)
       return;
 
+   if(!SHT_VegasReady())
+   {
+      const int have = Bars(_Symbol, InpAllowedTF);
+      SHT_PaintComment("warmup bars=" + IntegerToString(have) + " need>=" + IntegerToString(SHT_WARMUP));
+      return;
+   }
+
+   if(!g_replay_done)
+   {
+      SHT_EngineReplay();
+      g_replay_done = true;
+      g_last_bar = iTime(_Symbol, InpAllowedTF, 0);
+      SHTVegasSnap snap;
+      if(SHT_VegasRead(snap, 1))
+         SHT_PaintComment(SHT_EngineComment(snap));
+      return;
+   }
+
    const datetime bar_time = iTime(_Symbol, InpAllowedTF, 0);
    if(bar_time == 0 || bar_time == g_last_bar)
       return;
    g_last_bar = bar_time;
 
-   if(!SHT_VegasReady())
+   // The bar that just closed is shift 1 — same closed-bar logic as the backtest.
+   if(!SHT_EngineOnBar(1, false))
    {
-      const int have = Bars(_Symbol, InpAllowedTF);
-      SHT_Warn("vegas warmup bars=" + IntegerToString(have) + " need>=" + IntegerToString(SHT_WARMUP));
-      SHT_PaintComment("warmup bars=" + IntegerToString(have) + " need>=" + IntegerToString(SHT_WARMUP));
+      SHT_Warn("engine bar failed " + TimeToString(iTime(_Symbol, InpAllowedTF, 1),
+                                                   TIME_DATE | TIME_MINUTES));
       return;
    }
 
    SHTVegasSnap snap;
-   if(!SHT_VegasRead(snap))
-   {
-      SHT_Warn("vegas read failed on " + TimeToString(bar_time, TIME_DATE | TIME_MINUTES));
-      SHT_PaintComment("vegas read failed");
+   if(!SHT_VegasRead(snap, 1))
       return;
-   }
-
-   const string line = SHT_VegasLine(snap);
-   SHT_PaintComment(line);
-   SHT_Info("vegas " + TimeToString(bar_time, TIME_DATE | TIME_MINUTES) + " " + line);
+   SHT_PaintComment(SHT_EngineComment(snap));
+   SHT_Info("bar " + TimeToString(iTime(_Symbol, InpAllowedTF, 1), TIME_DATE | TIME_MINUTES)
+            + " " + SHT_VegasLine(snap)
+            + " armL=" + IntegerToString(g_long_state)
+            + " armS=" + IntegerToString(g_short_state)
+            + " pos=" + (g_pos_on ? (g_pos_side > 0 ? "L" : "S") : "flat"));
 }
