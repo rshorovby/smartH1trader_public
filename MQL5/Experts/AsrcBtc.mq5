@@ -1,16 +1,17 @@
 #property copyright   "rshorovby"
 #property link        "https://github.com/rshorovby/smartH1trader_public"
-#property version     "0.10"
-#property description "Personal BTCUSD M5 EA scaffold (ASRC). No orders until strategy modules land."
+#property version     "0.20"
+#property description "Personal BTCUSD M5 EA. ASRC channel/filters live; no orders yet."
 
 #include "../Include/ASRC_Config.mqh"
 #include "../Include/SHT_Log.mqh"
+#include "../Include/ASRC_Channel.mqh"
 
 input group "Safety"
 input string          InpAllowedSymbol  = "BTCUSD";
 input ENUM_TIMEFRAMES InpAllowedTF      = PERIOD_M5;
 input long            InpMagic          = 26081302;
-input bool            InpEnableTrading  = false;   // kill switch; v0.10 never sends orders
+input bool            InpEnableTrading  = false;   // v0.20 never sends orders
 input bool            InpLogToFile      = true;
 
 datetime g_last_bar = 0;
@@ -26,12 +27,23 @@ bool TimeframeIsAllowed()
    return (_Period == InpAllowedTF);
 }
 
+void ASRC_Paint(const string extra)
+{
+   Comment(
+      "AsrcBtc " + ASRC_VERSION + "\n"
+      + "symbol " + _Symbol + "  " + EnumToString((ENUM_TIMEFRAMES)_Period) + "\n"
+      + "trading " + (InpEnableTrading ? "ON" : "OFF") + "  orders blocked\n"
+      + extra
+   );
+}
+
 int OnInit()
 {
    g_sht_log_file = InpLogToFile;
    g_sht_log_name = ASRC_LOG_FILE;
    g_last_bar     = 0;
    g_chart_ok     = false;
+   Comment("");
 
    SHT_Info("AsrcBtc " + ASRC_VERSION + " init"
             + " symbol=" + _Symbol
@@ -52,16 +64,26 @@ int OnInit()
       return INIT_FAILED;
    }
 
+   if(!ASRC_Init(_Symbol))
+   {
+      SHT_Error("failed to create ASRC indicator handles");
+      ASRC_Release();
+      return INIT_FAILED;
+   }
+
    if(InpEnableTrading)
-      SHT_Warn("InpEnableTrading=true but v0.10 has no strategy - orders stay blocked");
+      SHT_Warn("InpEnableTrading=true but v0.20 has no entries - orders stay blocked");
 
    g_chart_ok = true;
-   SHT_Info("ASRC scaffold ready: heartbeat on each new M5 bar, OrderSend not compiled in");
+   ASRC_Paint("handles created, waiting for M15/H1 warmup");
+   SHT_Info("ASRC handles ready: M15 EMA36 channel, M5 EMA21/RSI/BB, H1 EMA55 - no OrderSend");
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason)
 {
+   Comment("");
+   ASRC_Release();
    SHT_Info("AsrcBtc deinit reason=" + IntegerToString(reason));
 }
 
@@ -75,12 +97,24 @@ void OnTick()
       return;
    g_last_bar = bar_time;
 
-   const long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-   SHT_Info("heartbeat"
-            + " bar=" + TimeToString(bar_time, TIME_DATE | TIME_MINUTES)
-            + " bid=" + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_BID), _Digits)
-            + " spread=" + IntegerToString(spread)
-            + " equity=" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2)
-            + " trading=" + (InpEnableTrading ? "ON" : "OFF")
-            + " strategy=none");
+   if(!ASRC_Ready())
+   {
+      ASRC_Paint("warmup M5=" + IntegerToString(Bars(_Symbol, PERIOD_M5))
+                 + " M15=" + IntegerToString(Bars(_Symbol, PERIOD_M15))
+                 + " H1=" + IntegerToString(Bars(_Symbol, PERIOD_H1)));
+      return;
+   }
+
+   ASRCSnap snap;
+   if(!ASRC_Read(snap, 1))
+   {
+      SHT_Warn("ASRC read failed");
+      ASRC_Paint("channel read failed - need M15/H1 history");
+      return;
+   }
+
+   ASRC_DrawChannel(snap.ch_up, snap.ch_lo);
+   const string line = ASRC_Line(snap);
+   ASRC_Paint(line);
+   SHT_Info("asrc " + TimeToString(snap.bar_time, TIME_DATE | TIME_MINUTES) + " " + line);
 }

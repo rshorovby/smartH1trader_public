@@ -12,15 +12,16 @@ This repository is the source of truth for the live bots. Research, broker dumps
 
 ### AsrcBtc — Alpha S/R Channel BTCUSD M5
 
-**v0.10 — scaffold only.** Attaches to **BTCUSD M5**, checks symbol/timeframe, kill switch, heartbeat log. No channel math and no orders yet. Magic `26081302` (Vegas uses `26081301`). Do not enable live trading on this EA.
+**v0.20 — channel and filters, no orders.** M15 EMA36 ±0.35% channel, M5 EMA21/RSI/BB, H1 EMA55, NY Friday/no-trade flags. Comment + dotted channel lines. Magic `26081302`. Keep `InpEnableTrading = false`.
 
 ## Layout
 
 ```
 MQL5/Experts/SmartH1Trader.mq5   // Vegas XAUUSD H1
-MQL5/Experts/AsrcBtc.mq5         // ASRC BTCUSD M5 (scaffold)
+MQL5/Experts/AsrcBtc.mq5         // ASRC BTCUSD M5
 MQL5/Include/SHT_*.mqh           // shared log / risk / news / exec / Vegas
 MQL5/Include/ASRC_Config.mqh     // ASRC constants
+MQL5/Include/ASRC_Channel.mqh    // M15 channel + filters
 ```
 
 ## Compile (FundingPips MT5)
@@ -47,8 +48,8 @@ Vegas XAUUSD H1: done through live orders.
 
 ASRC BTCUSD M5:
 
-1. Scaffold *(this version)*
-2. M15 channel + M5/H1 filters
+1. Scaffold
+2. M15 channel + M5/H1 filters *(this version)*
 3. Shadow entries / SL / TP
 4. Risk 0.5% + daily halt (shared account halt comes later)
 5. USD news window
