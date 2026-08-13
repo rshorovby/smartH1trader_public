@@ -5,6 +5,7 @@
 #include "SHT_Log.mqh"
 #include "SHT_Vegas.mqh"
 #include "SHT_Risk.mqh"
+#include "SHT_News.mqh"
 
 // Vegas Channel Tunnel v1.1 — same numbers as the Python backtest.
 #define SHT_RR           3.0
@@ -294,26 +295,41 @@ bool SHT_EngineOnBar(const int shift, const bool replay)
       g_short_state = 1;
 
    // Manage only after the entry bar, same as the Python loop (i > entry_i).
+   // Skip closes inside the news window unless the swing exception (5h+) applies.
    if(g_pos_on && t > g_pos_time)
-      SHT_Manage(t, h, l, c, snap.atr);
+   {
+      const bool news_hold = (!replay && SHT_NewsBlocks(t) && SHT_NewsYoung(g_pos_time, t));
+      if(!news_hold)
+         SHT_Manage(t, h, l, c, snap.atr);
+      else if(!replay)
+         SHT_Info("hold through news window — no shadow close");
+   }
 
    if(!g_pos_on)
    {
-      const double sl_dist = snap.atr * SHT_ATR_SL;
-      double lots = 0.0;
-      if(long_retrace && allow_long)
+      if(!replay && SHT_NewsBlocks(t))
       {
-         if(SHT_RiskCanEnter(t, replay, sl_dist, SHT_NowFloating(), lots))
-            SHT_ShadowOpen(t, c, snap.atr, +1, SHT_USE_REGIME && snap.strong_up, lots);
-         else if(!replay)
-            SHT_Info("skip long: " + g_risk_why);
+         if(long_retrace || short_rebound)
+            SHT_Info("skip entry: news window " + SHT_NewsLine());
       }
-      else if(short_rebound && allow_short)
+      else
       {
-         if(SHT_RiskCanEnter(t, replay, sl_dist, SHT_NowFloating(), lots))
-            SHT_ShadowOpen(t, c, snap.atr, -1, SHT_USE_REGIME && snap.strong_dn, lots);
-         else if(!replay)
-            SHT_Info("skip short: " + g_risk_why);
+         const double sl_dist = snap.atr * SHT_ATR_SL;
+         double lots = 0.0;
+         if(long_retrace && allow_long)
+         {
+            if(SHT_RiskCanEnter(t, replay, sl_dist, SHT_NowFloating(), lots))
+               SHT_ShadowOpen(t, c, snap.atr, +1, SHT_USE_REGIME && snap.strong_up, lots);
+            else if(!replay)
+               SHT_Info("skip long: " + g_risk_why);
+         }
+         else if(short_rebound && allow_short)
+         {
+            if(SHT_RiskCanEnter(t, replay, sl_dist, SHT_NowFloating(), lots))
+               SHT_ShadowOpen(t, c, snap.atr, -1, SHT_USE_REGIME && snap.strong_dn, lots);
+            else if(!replay)
+               SHT_Info("skip short: " + g_risk_why);
+         }
       }
    }
 
@@ -373,6 +389,7 @@ string SHT_EngineComment(const SHTVegasSnap &snap)
           + "  closed=" + IntegerToString(g_closed_n)
           + "\n" + pos
           + "\n" + SHT_RiskLine(SHT_NowFloating())
+          + "\n" + SHT_NewsLine()
           + "\nshadow only — no OrderSend";
 }
 

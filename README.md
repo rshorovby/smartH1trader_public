@@ -6,7 +6,7 @@ This repository is the source of truth for the live bot. Research, broker dumps,
 
 ## Current status
 
-**v0.40 — shadow + risk, no broker orders.** Vegas Channel Tunnel on XAUUSD H1: replay closed bars, then live closed-bar signals. Position size is 0.5% of equity (ATR×2 stop). New shadow entries halt if the day's shadow P&amp;L (closed + floating) reaches −2% — a buffer under typical FundingPips daily loss. `OrderSend` is still not compiled in.
+**v0.50 — shadow + risk + USD news window, no broker orders.** Vegas Channel Tunnel on XAUUSD H1. Size is 0.5% of equity. Daily paper halt at −2%. High-impact **USD** events (MT5 calendar) block new entries ±**7 minutes** (FundingPips official window is ±5; extra buffer is intentional). Positions younger than 5 hours are flattened in the 7 minutes *before* the print so the close is outside the firm window. Replay ignores news so trade counts stay comparable to the Python backtest.
 
 ## Layout
 
@@ -17,6 +17,7 @@ MQL5/Include/SHT_Log.mqh         // journal + file logger
 MQL5/Include/SHT_Vegas.mqh       // EMA tunnel / ATR / ADX
 MQL5/Include/SHT_Engine.mqh      // shadow entries / exits
 MQL5/Include/SHT_Risk.mqh        // lot size + daily halt
+MQL5/Include/SHT_News.mqh        // red USD window
 ```
 
 ## Compile (FundingPips MT5)
@@ -30,14 +31,17 @@ Relative includes (`../Include/...`) resolve when the repo tree is copied as-is 
 
 ## What you should see after attach
 
-- Experts: `replay ... closed=N` and each open line includes `lots=...` (typically ~0.01 on a small challenge if gold SL is wide).
-- Comment: `risk 0.50%  halt@2.0%  day=0.00%` plus `lots=` on an open shadow trade.
-- Trade tab: still empty. Daily halt is paper-only until orders exist.
+- Experts: `replay ... closed=N`, then `news loaded high-USD=... buffer=7m`.
+- Comment: `news next ... in Xm` or `news WINDOW ...` or `news calendar EMPTY`.
+- Trade tab: still empty.
+
+If the comment says **calendar EMPTY**, the MT5 economic calendar did not load (Wine / no sync). The filter then stays inactive — do not go live until it lists upcoming USD events.
 
 ## Roadmap
 
 1. Scaffold: symbol, magic, kill switch, logs.
 2. Vegas indicators: EMA 8 / 55·89 / 576·676, ATR, ADX.
 3. Entries, stop, take-profit / trail (shadow).
-4. Risk 0.5% equity per trade and daily halt. *(this version)*
-5. High-impact news window.
+4. Risk 0.5% equity per trade and daily halt.
+5. High-impact news window. *(this version)*
+6. Broker orders (only after a shadow period you are happy with).

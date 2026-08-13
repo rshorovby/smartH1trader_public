@@ -1,26 +1,33 @@
 #property copyright   "rshorovby"
 #property link        "https://github.com/rshorovby/smartH1trader_public"
-#property version     "0.40"
-#property description "Personal XAUUSD H1 EA. Vegas shadow with 0.5% risk and daily halt; no broker orders."
+#property version     "0.50"
+#property description "Personal XAUUSD H1 EA. Vegas shadow, 0.5% risk, USD news window; no broker orders."
 
 #include "../Include/SHT_Config.mqh"
 #include "../Include/SHT_Log.mqh"
 #include "../Include/SHT_Vegas.mqh"
 #include "../Include/SHT_Risk.mqh"
+#include "../Include/SHT_News.mqh"
 #include "../Include/SHT_Engine.mqh"
 
 input group "Safety"
 input string          InpAllowedSymbol  = "XAUUSD";
 input ENUM_TIMEFRAMES InpAllowedTF      = PERIOD_H1;
 input long            InpMagic          = 26081301;
-input bool            InpEnableTrading  = false;   // v0.40 still never sends orders
+input bool            InpEnableTrading  = false;   // v0.50 still never sends orders
 input bool            InpLogToFile      = true;
 
 input group "Risk"
 input double          InpRiskPct        = 0.5;     // percent of equity per trade
 input double          InpDailyHaltPct   = 2.0;     // halt new entries (buffer under FP daily DD)
 
+input group "News"
+input bool            InpNewsFilter     = true;
+input int             InpNewsBufferMin  = 7;       // minutes each side of red USD (FP is 5)
+input int             InpNewsHoldHours  = 5;       // FP swing exception: hold if opened this long before
+
 datetime g_last_bar    = 0;
+datetime g_last_ui     = 0;
 bool     g_chart_ok    = false;
 bool     g_replay_done = false;
 
@@ -48,6 +55,7 @@ int OnInit()
 {
    g_sht_log_file = InpLogToFile;
    g_last_bar     = 0;
+   g_last_ui      = 0;
    g_chart_ok     = false;
    g_replay_done  = false;
    Comment("");
@@ -93,8 +101,24 @@ int OnInit()
    g_risk_pct       = InpRiskPct / 100.0;
    g_daily_halt_pct = InpDailyHaltPct / 100.0;
 
+   if(InpNewsBufferMin < 6 || InpNewsBufferMin > 15)
+   {
+      SHT_Error("InpNewsBufferMin must be 6-15 (FP rule is +/-5; we keep extra buffer)");
+      SHT_VegasRelease();
+      return INIT_FAILED;
+   }
+   if(InpNewsHoldHours < 0 || InpNewsHoldHours > 24)
+   {
+      SHT_Error("InpNewsHoldHours must be 0–24");
+      SHT_VegasRelease();
+      return INIT_FAILED;
+   }
+   g_news_enabled    = InpNewsFilter;
+   g_news_buffer_sec = InpNewsBufferMin * 60;
+   g_news_hold_sec   = InpNewsHoldHours * 3600;
+
    if(InpEnableTrading)
-      SHT_Warn("InpEnableTrading=true but v0.40 is shadow-only — orders stay blocked");
+      SHT_Warn("InpEnableTrading=true but v0.50 is shadow-only — orders stay blocked");
 
    g_chart_ok = true;
    SHT_PaintComment("waiting for indicator warmup, then history replay");
@@ -107,6 +131,14 @@ void OnDeinit(const int reason)
    Comment("");
    SHT_VegasRelease();
    SHT_Info("deinit reason=" + IntegerToString(reason));
+}
+
+void SHT_RefreshComment()
+{
+   SHTVegasSnap snap;
+   if(SHT_VegasRead(snap, 1))
+      SHT_PaintComment(SHT_EngineComment(snap));
+   g_last_ui = TimeCurrent();
 }
 
 void OnTick()
@@ -126,32 +158,40 @@ void OnTick()
       SHT_EngineReplay();
       g_replay_done = true;
       g_last_bar = iTime(_Symbol, InpAllowedTF, 0);
-      SHTVegasSnap snap;
-      if(SHT_VegasRead(snap, 1))
-         SHT_PaintComment(SHT_EngineComment(snap));
+      SHT_NewsPoll();
+      SHT_RefreshComment();
       return;
+   }
+
+   SHT_NewsPoll();
+
+   // News window is minutes, not hours — flatten on tick, not on H1 close.
+   if(g_pos_on && SHT_NewsShouldFlatten(g_pos_time, TimeCurrent()))
+   {
+      const double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      SHT_ShadowClose(TimeCurrent(), bid, "news_flatten");
+      SHT_RefreshComment();
    }
 
    const datetime bar_time = iTime(_Symbol, InpAllowedTF, 0);
-   if(bar_time == 0 || bar_time == g_last_bar)
-      return;
-   g_last_bar = bar_time;
-
-   // The bar that just closed is shift 1 — same closed-bar logic as the backtest.
-   if(!SHT_EngineOnBar(1, false))
+   if(bar_time != 0 && bar_time != g_last_bar)
    {
-      SHT_Warn("engine bar failed " + TimeToString(iTime(_Symbol, InpAllowedTF, 1),
-                                                   TIME_DATE | TIME_MINUTES));
+      g_last_bar = bar_time;
+      if(!SHT_EngineOnBar(1, false))
+      {
+         SHT_Warn("engine bar failed " + TimeToString(iTime(_Symbol, InpAllowedTF, 1),
+                                                      TIME_DATE | TIME_MINUTES));
+         return;
+      }
+      SHT_Info("bar " + TimeToString(iTime(_Symbol, InpAllowedTF, 1), TIME_DATE | TIME_MINUTES)
+               + " armL=" + IntegerToString(g_long_state)
+               + " armS=" + IntegerToString(g_short_state)
+               + " pos=" + (g_pos_on ? (g_pos_side > 0 ? "L" : "S") : "flat")
+               + " " + SHT_NewsLine());
+      SHT_RefreshComment();
       return;
    }
 
-   SHTVegasSnap snap;
-   if(!SHT_VegasRead(snap, 1))
-      return;
-   SHT_PaintComment(SHT_EngineComment(snap));
-   SHT_Info("bar " + TimeToString(iTime(_Symbol, InpAllowedTF, 1), TIME_DATE | TIME_MINUTES)
-            + " " + SHT_VegasLine(snap)
-            + " armL=" + IntegerToString(g_long_state)
-            + " armS=" + IntegerToString(g_short_state)
-            + " pos=" + (g_pos_on ? (g_pos_side > 0 ? "L" : "S") : "flat"));
+   if(TimeCurrent() - g_last_ui >= 15)
+      SHT_RefreshComment();
 }
