@@ -4,6 +4,7 @@
 #include "SHT_Config.mqh"
 #include "SHT_Log.mqh"
 #include "SHT_Vegas.mqh"
+#include "SHT_Risk.mqh"
 
 // Vegas Channel Tunnel v1.1 — same numbers as the Python backtest.
 #define SHT_RR           3.0
@@ -108,11 +109,14 @@ void SHT_ShadowFill(const double px, const double frac, const string tag)
    g_pos_R   += r * take;
    g_pos_rem -= take;
    if(!g_replay)
+   {
+      SHT_RiskAddPnl(r * take * g_pos_risk_money);
       SHT_Info("shadow fill #" + IntegerToString(g_trade_id)
                + " " + tag
                + " " + DoubleToString(take * 100, 0) + "%"
                + " @" + DoubleToString(px, _Digits)
                + " " + DoubleToString(r, 2) + "R");
+   }
 }
 
 void SHT_ShadowClose(const datetime t, const double px, const string reason)
@@ -136,17 +140,18 @@ void SHT_ShadowClose(const datetime t, const double px, const string reason)
    g_pos_tp1    = false;
    g_pos_scaled = false;
    g_pos_ride   = false;
+   g_pos_lots   = 0.0;
    SHT_LevelsClear();
 }
 
 void SHT_ShadowOpen(const datetime t, const double close_px, const double atr,
-                    const int side, const bool ride)
+                    const int side, const bool ride, const double lots)
 {
    const double sl = (side > 0)
                      ? close_px - atr * SHT_ATR_SL
                      : close_px + atr * SHT_ATR_SL;
-   const double risk = MathAbs(close_px - sl);
-   if(risk <= 0.0)
+   const double sl_dist = MathAbs(close_px - sl);
+   if(sl_dist <= 0.0 || lots <= 0.0)
       return;
 
    g_trade_id++;
@@ -154,13 +159,16 @@ void SHT_ShadowOpen(const datetime t, const double close_px, const double atr,
    g_pos_side   = side;
    g_pos_time   = t;
    g_pos_entry  = close_px;
-   g_pos_rdist  = risk;
+   g_pos_rdist  = sl_dist;
    g_pos_stop   = sl;
    g_pos_tp1    = false;
    g_pos_scaled = false;
    g_pos_ride   = ride;
    g_pos_rem    = 1.0;
    g_pos_R      = 0.0;
+   g_pos_lots   = lots;
+   g_pos_eq     = AccountInfoDouble(ACCOUNT_EQUITY);
+   g_pos_risk_money = g_pos_eq * g_risk_pct;
 
    SHT_Mark("E" + IntegerToString(g_trade_id), t, close_px,
             (side > 0 ? 233 : 234),
@@ -170,10 +178,19 @@ void SHT_ShadowOpen(const datetime t, const double close_px, const double atr,
             + " " + (side > 0 ? "long" : "short")
             + " entry=" + DoubleToString(close_px, _Digits)
             + " sl=" + DoubleToString(sl, _Digits)
-            + " r=" + DoubleToString(risk, _Digits)
+            + " r=" + DoubleToString(sl_dist, _Digits)
+            + " lots=" + DoubleToString(lots, 2)
             + (ride ? " ride" : ""));
    if(!g_replay)
       SHT_LevelsDraw();
+}
+
+double SHT_NowFloating()
+{
+   if(!g_pos_on)
+      return 0.0;
+   return SHT_RiskFloating(g_pos_side, g_pos_entry, g_pos_rdist, g_pos_rem,
+                           SymbolInfoDouble(_Symbol, SYMBOL_BID));
 }
 
 void SHT_Manage(const datetime t, const double high, const double low,
@@ -282,10 +299,22 @@ bool SHT_EngineOnBar(const int shift, const bool replay)
 
    if(!g_pos_on)
    {
+      const double sl_dist = snap.atr * SHT_ATR_SL;
+      double lots = 0.0;
       if(long_retrace && allow_long)
-         SHT_ShadowOpen(t, c, snap.atr, +1, SHT_USE_REGIME && snap.strong_up);
+      {
+         if(SHT_RiskCanEnter(t, replay, sl_dist, SHT_NowFloating(), lots))
+            SHT_ShadowOpen(t, c, snap.atr, +1, SHT_USE_REGIME && snap.strong_up, lots);
+         else if(!replay)
+            SHT_Info("skip long: " + g_risk_why);
+      }
       else if(short_rebound && allow_short)
-         SHT_ShadowOpen(t, c, snap.atr, -1, SHT_USE_REGIME && snap.strong_dn);
+      {
+         if(SHT_RiskCanEnter(t, replay, sl_dist, SHT_NowFloating(), lots))
+            SHT_ShadowOpen(t, c, snap.atr, -1, SHT_USE_REGIME && snap.strong_dn, lots);
+         else if(!replay)
+            SHT_Info("skip short: " + g_risk_why);
+      }
    }
 
    return true;
@@ -315,6 +344,7 @@ int SHT_EngineReplay()
          ok++;
    }
    g_replay = false;
+   SHT_RiskResetDay(TimeCurrent());
    if(g_pos_on)
       SHT_LevelsDraw();
    ChartRedraw(0);
@@ -333,6 +363,7 @@ string SHT_EngineComment(const SHTVegasSnap &snap)
             + " #" + IntegerToString(g_trade_id)
             + " @" + DoubleToString(g_pos_entry, _Digits)
             + " sl=" + DoubleToString(g_pos_stop, _Digits)
+            + " lots=" + DoubleToString(g_pos_lots, 2)
             + " rem=" + DoubleToString(g_pos_rem * 100, 0) + "%"
             + (g_pos_ride ? " RIDE" : "")
             + (g_pos_tp1 ? " tp1" : "");
@@ -341,6 +372,7 @@ string SHT_EngineComment(const SHTVegasSnap &snap)
           + " S=" + IntegerToString(g_short_state)
           + "  closed=" + IntegerToString(g_closed_n)
           + "\n" + pos
+          + "\n" + SHT_RiskLine(SHT_NowFloating())
           + "\nshadow only — no OrderSend";
 }
 

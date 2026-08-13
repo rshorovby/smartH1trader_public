@@ -1,19 +1,24 @@
 #property copyright   "rshorovby"
 #property link        "https://github.com/rshorovby/smartH1trader_public"
-#property version     "0.30"
-#property description "Personal XAUUSD H1 EA. Vegas shadow entries/exits; no broker orders."
+#property version     "0.40"
+#property description "Personal XAUUSD H1 EA. Vegas shadow with 0.5% risk and daily halt; no broker orders."
 
 #include "../Include/SHT_Config.mqh"
 #include "../Include/SHT_Log.mqh"
 #include "../Include/SHT_Vegas.mqh"
+#include "../Include/SHT_Risk.mqh"
 #include "../Include/SHT_Engine.mqh"
 
 input group "Safety"
 input string          InpAllowedSymbol  = "XAUUSD";
 input ENUM_TIMEFRAMES InpAllowedTF      = PERIOD_H1;
 input long            InpMagic          = 26081301;
-input bool            InpEnableTrading  = false;   // v0.3 still never sends orders
+input bool            InpEnableTrading  = false;   // v0.40 still never sends orders
 input bool            InpLogToFile      = true;
+
+input group "Risk"
+input double          InpRiskPct        = 0.5;     // percent of equity per trade
+input double          InpDailyHaltPct   = 2.0;     // halt new entries (buffer under FP daily DD)
 
 datetime g_last_bar    = 0;
 bool     g_chart_ok    = false;
@@ -73,8 +78,23 @@ int OnInit()
       return INIT_FAILED;
    }
 
+   if(InpRiskPct <= 0.0 || InpRiskPct > 2.0)
+   {
+      SHT_Error("InpRiskPct must be in (0, 2]");
+      SHT_VegasRelease();
+      return INIT_FAILED;
+   }
+   if(InpDailyHaltPct < InpRiskPct)
+   {
+      SHT_Error("InpDailyHaltPct must be >= InpRiskPct");
+      SHT_VegasRelease();
+      return INIT_FAILED;
+   }
+   g_risk_pct       = InpRiskPct / 100.0;
+   g_daily_halt_pct = InpDailyHaltPct / 100.0;
+
    if(InpEnableTrading)
-      SHT_Warn("InpEnableTrading=true but v0.3 is shadow-only — orders stay blocked");
+      SHT_Warn("InpEnableTrading=true but v0.40 is shadow-only — orders stay blocked");
 
    g_chart_ok = true;
    SHT_PaintComment("waiting for indicator warmup, then history replay");

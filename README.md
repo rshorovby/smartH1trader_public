@@ -6,7 +6,7 @@ This repository is the source of truth for the live bot. Research, broker dumps,
 
 ## Current status
 
-**v0.3.0 — Vegas shadow engine, no broker orders.** On attach the EA replays closed XAUUSD H1 bars, then on each new hour it evaluates the just-closed bar: tunnel arm → retrace entry, ATR×2 stop, TP1 1.5R (50%), final 3R, BE + ATR×3 trail, ADX regime / ride. Signals are logged and marked on the chart. `OrderSend` is still not compiled in.
+**v0.40 — shadow + risk, no broker orders.** Vegas Channel Tunnel on XAUUSD H1: replay closed bars, then live closed-bar signals. Position size is 0.5% of equity (ATR×2 stop). New shadow entries halt if the day's shadow P&amp;L (closed + floating) reaches −2% — a buffer under typical FundingPips daily loss. `OrderSend` is still not compiled in.
 
 ## Layout
 
@@ -16,6 +16,7 @@ MQL5/Include/SHT_Config.mqh      // constants
 MQL5/Include/SHT_Log.mqh         // journal + file logger
 MQL5/Include/SHT_Vegas.mqh       // EMA tunnel / ATR / ADX
 MQL5/Include/SHT_Engine.mqh      // shadow entries / exits
+MQL5/Include/SHT_Risk.mqh        // lot size + daily halt
 ```
 
 ## Compile (FundingPips MT5)
@@ -29,15 +30,14 @@ Relative includes (`../Include/...`) resolve when the repo tree is copied as-is 
 
 ## What you should see after attach
 
-- Experts: `replay bars=... closed=N` (N should be in the same ballpark as the Python backtest on this history).
-- Chart: entry/exit arrows; if a shadow position is open, SL / TP1 / TP lines.
-- Comment: `arm L/S`, `flat` or `LONG/SHORT #id`, `shadow only — no OrderSend`.
-- Trade tab: still empty.
+- Experts: `replay ... closed=N` and each open line includes `lots=...` (typically ~0.01 on a small challenge if gold SL is wide).
+- Comment: `risk 0.50%  halt@2.0%  day=0.00%` plus `lots=` on an open shadow trade.
+- Trade tab: still empty. Daily halt is paper-only until orders exist.
 
 ## Roadmap
 
 1. Scaffold: symbol, magic, kill switch, logs.
 2. Vegas indicators: EMA 8 / 55·89 / 576·676, ATR, ADX.
-3. Entries, stop, take-profit / trail. *(this version, shadow)*
-4. Risk 0.5% equity per trade and daily halt.
+3. Entries, stop, take-profit / trail (shadow).
+4. Risk 0.5% equity per trade and daily halt. *(this version)*
 5. High-impact news window.
