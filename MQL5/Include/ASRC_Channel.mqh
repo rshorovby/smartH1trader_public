@@ -42,6 +42,8 @@ struct ASRCSnap
    bool     low_vol;
    bool     friday;
    bool     no_trade;
+   bool     session_reset;
+   bool     eod;
    bool     valid;
 };
 
@@ -113,43 +115,63 @@ void ASRC_NyStamp(const datetime server_t, MqlDateTime &ny)
    TimeToStruct(gmt - off * 3600, ny);
 }
 
+double ASRC_TickSize()
+{
+   double t = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(t <= 0.0)
+      t = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   if(t <= 0.0)
+      t = 0.01;
+   return t;
+}
+
+void ASRC_ResetBias()
+{
+   g_asrc_bias_l = false;
+   g_asrc_bias_s = false;
+}
+
 double ASRC_Squeeze(const int shift)
 {
+   const int n = ASRC_SQZ_LEN;
+   const int need = 2 * n - 1;
    double c[], hi[], lo[];
    ArraySetAsSeries(c, true);
    ArraySetAsSeries(hi, true);
    ArraySetAsSeries(lo, true);
-   if(CopyClose(_Symbol, PERIOD_M5, shift, ASRC_SQZ_LEN, c) < ASRC_SQZ_LEN)
+   if(CopyClose(_Symbol, PERIOD_M5, shift, need, c) < need)
       return EMPTY_VALUE;
-   if(CopyHigh(_Symbol, PERIOD_M5, shift, ASRC_SQZ_LEN, hi) < ASRC_SQZ_LEN)
+   if(CopyHigh(_Symbol, PERIOD_M5, shift, need, hi) < need)
       return EMPTY_VALUE;
-   if(CopyLow(_Symbol, PERIOD_M5, shift, ASRC_SQZ_LEN, lo) < ASRC_SQZ_LEN)
+   if(CopyLow(_Symbol, PERIOD_M5, shift, need, lo) < need)
       return EMPTY_VALUE;
-
-   double sum = 0.0, hh = hi[0], ll = lo[0];
-   for(int i = 0; i < ASRC_SQZ_LEN; i++)
-   {
-      sum += c[i];
-      if(hi[i] > hh) hh = hi[i];
-      if(lo[i] < ll) ll = lo[i];
-   }
-   const double sma = sum / ASRC_SQZ_LEN;
-   const double avg3 = (((hh + ll) / 2.0) + sma) / 2.0;
 
    double y[];
-   ArrayResize(y, ASRC_SQZ_LEN);
+   ArrayResize(y, n);
    double ymean = 0.0;
-   for(int i = 0; i < ASRC_SQZ_LEN; i++)
+   for(int k = 0; k < n; k++)
    {
-      // series: 0 = newest. Pine linreg window is oldest..newest in time order.
-      y[ASRC_SQZ_LEN - 1 - i] = c[i] - avg3;
-      ymean += y[ASRC_SQZ_LEN - 1 - i];
+      double sum = 0.0, hh = hi[k], ll = lo[k];
+      for(int j = 0; j < n; j++)
+      {
+         const int idx = k + j;
+         sum += c[idx];
+         if(hi[idx] > hh)
+            hh = hi[idx];
+         if(lo[idx] < ll)
+            ll = lo[idx];
+      }
+      const double sma = sum / n;
+      const double avg3 = (((hh + ll) / 2.0) + sma) / 2.0;
+      const double yk = c[k] - avg3;
+      y[n - 1 - k] = yk;
+      ymean += yk;
    }
-   ymean /= ASRC_SQZ_LEN;
+   ymean /= n;
 
-   double xmean = (ASRC_SQZ_LEN - 1) / 2.0;
+   const double xmean = (n - 1) / 2.0;
    double num = 0.0, den = 0.0;
-   for(int i = 0; i < ASRC_SQZ_LEN; i++)
+   for(int i = 0; i < n; i++)
    {
       const double xd = i - xmean;
       num += xd * (y[i] - ymean);
@@ -158,7 +180,7 @@ double ASRC_Squeeze(const int shift)
    if(den == 0.0)
       return EMPTY_VALUE;
    const double slope = num / den;
-   return ymean + slope * ((ASRC_SQZ_LEN - 1) / 2.0);
+   return ymean + slope * ((n - 1) / 2.0);
 }
 
 bool ASRC_Init(const string symbol)
@@ -303,6 +325,10 @@ bool ASRC_Read(ASRCSnap &s, const int shift)
    s.friday = (ny.day_of_week == 5);
    const int mins = ny.hour * 60 + ny.min;
    s.no_trade = (mins >= (16 * 60 + 45) && mins <= (19 * 60 + 5));
+   s.session_reset = ((ny.hour == 9 && ny.min == 30)
+                      || (ny.hour == 20 && ny.min == 0)
+                      || (ny.hour == 3 && ny.min == 30));
+   s.eod = (ny.hour == 17 && ny.min == 0);
    s.valid = true;
    return true;
 }

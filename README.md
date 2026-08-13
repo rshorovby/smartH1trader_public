@@ -12,7 +12,7 @@ This repository is the source of truth for the live bots. Research, broker dumps
 
 ### AsrcBtc — Alpha S/R Channel BTCUSD M5
 
-**v0.20 — channel and filters, no orders.** M15 EMA36 ±0.35% channel, M5 EMA21/RSI/BB, H1 EMA55, NY Friday/no-trade flags. Comment + dotted channel lines. Magic `26081302`. Keep `InpEnableTrading = false`.
+**v0.30 — shadow entries, no broker orders.** Engulf or pin+sweep, SL = channel ±500 ticks, TP 3R, EOD flatten 17:00 NY, max 2 first-legs per session, optional same-side add-on, min 4 M5 bars between entries. Friday and 16:45–19:05 NY blocked. Magic `26081302`. Keep `InpEnableTrading = false`.
 
 ## Layout
 
@@ -22,6 +22,7 @@ MQL5/Experts/AsrcBtc.mq5         // ASRC BTCUSD M5
 MQL5/Include/SHT_*.mqh           // shared log / risk / news / exec / Vegas
 MQL5/Include/ASRC_Config.mqh     // ASRC constants
 MQL5/Include/ASRC_Channel.mqh    // M15 channel + filters
+MQL5/Include/ASRC_Engine.mqh     // shadow entries / SL / TP / EOD
 ```
 
 ## Compile (FundingPips MT5)
@@ -40,7 +41,7 @@ Relative includes (`../Include/...`) resolve when the repo tree is copied as-is 
 3. In EA inputs set `InpEnableTrading = true`. Re-attach. Experts should log `LIVE ORDERS ARMED`.
 4. Comment says `trading LIVE`. The next H1 signal can place a real order. SL is on the broker even if Wine/MT5 dies.
 
-Leave `InpEnableTrading = false` to stay in shadow mode. **AsrcBtc must stay false** until its strategy modules exist.
+Leave `InpEnableTrading = false` to stay in shadow mode. **AsrcBtc must stay false** until risk, news, and live layers exist.
 
 ## Roadmap
 
@@ -49,8 +50,8 @@ Vegas XAUUSD H1: done through live orders.
 ASRC BTCUSD M5:
 
 1. Scaffold
-2. M15 channel + M5/H1 filters *(this version)*
-3. Shadow entries / SL / TP
+2. M15 channel + M5/H1 filters
+3. Shadow entries / SL / TP *(this version)*
 4. Risk 0.5% + daily halt (shared account halt comes later)
 5. USD news window
 6. Broker orders
