@@ -1,11 +1,12 @@
 #property copyright   "rshorovby"
 #property link        "https://github.com/rshorovby/smartH1trader_public"
-#property version     "0.40"
-#property description "Personal BTCUSD M5 EA. ASRC shadow + 0.5% risk; no broker orders."
+#property version     "0.50"
+#property description "Personal BTCUSD M5 EA. ASRC shadow + 0.5% risk + USD news; no broker orders."
 
 #include "../Include/ASRC_Config.mqh"
 #include "../Include/SHT_Log.mqh"
 #include "../Include/SHT_Risk.mqh"
+#include "../Include/SHT_News.mqh"
 #include "../Include/ASRC_Channel.mqh"
 #include "../Include/ASRC_Engine.mqh"
 
@@ -13,12 +14,17 @@ input group "Safety"
 input string          InpAllowedSymbol  = "BTCUSD";
 input ENUM_TIMEFRAMES InpAllowedTF      = PERIOD_M5;
 input long            InpMagic          = 26081302;
-input bool            InpEnableTrading  = false;   // v0.40 never sends orders
+input bool            InpEnableTrading  = false;   // v0.50 never sends orders
 input bool            InpLogToFile      = true;
 
 input group "Risk"
 input double          InpRiskPct        = 0.5;     // percent of equity per leg
 input double          InpDailyHaltPct   = 2.0;     // halt new entries (local to this EA)
+
+input group "News"
+input bool            InpNewsFilter     = true;
+input int             InpNewsBufferMin  = 7;       // minutes each side of red USD (FP is 5)
+input int             InpNewsHoldHours  = 5;       // FP swing exception: hold if opened this long before
 
 datetime g_last_bar    = 0;
 datetime g_last_ui     = 0;
@@ -98,6 +104,20 @@ int OnInit()
    g_risk_pct       = InpRiskPct / 100.0;
    g_daily_halt_pct = InpDailyHaltPct / 100.0;
 
+   if(InpNewsBufferMin < 6 || InpNewsBufferMin > 15)
+   {
+      SHT_Error("InpNewsBufferMin must be 6-15 (FP rule is +/-5; we keep extra buffer)");
+      return INIT_FAILED;
+   }
+   if(InpNewsHoldHours < 0 || InpNewsHoldHours > 24)
+   {
+      SHT_Error("InpNewsHoldHours must be 0-24");
+      return INIT_FAILED;
+   }
+   g_news_enabled    = InpNewsFilter;
+   g_news_buffer_sec = InpNewsBufferMin * 60;
+   g_news_hold_sec   = InpNewsHoldHours * 3600;
+
    if(!ASRC_Init(_Symbol))
    {
       SHT_Error("failed to create ASRC indicator handles");
@@ -106,12 +126,13 @@ int OnInit()
    }
 
    if(InpEnableTrading)
-      SHT_Warn("InpEnableTrading=true but v0.40 has no OrderSend - shadow only");
+      SHT_Warn("InpEnableTrading=true but v0.50 has no OrderSend - shadow only");
 
    g_chart_ok = true;
    ASRC_Paint("handles created, waiting for M15/H1 warmup then replay");
    SHT_Info("ASRC risk " + DoubleToString(InpRiskPct, 2) + "% per leg, local halt -"
-            + DoubleToString(InpDailyHaltPct, 1) + "% (not shared with Vegas)");
+            + DoubleToString(InpDailyHaltPct, 1) + "%, news +/-"
+            + IntegerToString(InpNewsBufferMin) + "m USD");
    return INIT_SUCCEEDED;
 }
 
@@ -140,8 +161,18 @@ void OnTick()
       ASRC_EngineReplay();
       g_replay_done = true;
       g_last_bar = iTime(_Symbol, InpAllowedTF, 0);
+      SHT_NewsPoll();
       ASRC_RefreshComment();
       return;
+   }
+
+   SHT_NewsPoll();
+   if(ASRC_OpenCount() > 0)
+   {
+      const int before = ASRC_OpenCount();
+      ASRC_NewsTickFlatten();
+      if(ASRC_OpenCount() != before)
+         ASRC_RefreshComment();
    }
 
    const datetime bar_time = iTime(_Symbol, InpAllowedTF, 0);
@@ -154,6 +185,9 @@ void OnTick()
                                                       TIME_DATE | TIME_MINUTES));
          return;
       }
+      SHT_Info("bar " + TimeToString(iTime(_Symbol, InpAllowedTF, 1), TIME_DATE | TIME_MINUTES)
+               + " open=" + IntegerToString(ASRC_OpenCount())
+               + " " + SHT_NewsLine());
       ASRC_RefreshComment();
       return;
    }

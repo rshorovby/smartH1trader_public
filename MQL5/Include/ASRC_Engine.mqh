@@ -4,6 +4,7 @@
 #include "ASRC_Config.mqh"
 #include "SHT_Log.mqh"
 #include "SHT_Risk.mqh"
+#include "SHT_News.mqh"
 #include "ASRC_Channel.mqh"
 
 // Alpha S/R Channel — same numbers as backtest_alpha_sr_channel.py (BTC tick 0.01).
@@ -275,12 +276,19 @@ void ASRC_FlattenAll(const datetime t, const double px, const string reason)
 
 void ASRC_Manage(const datetime t, const double high, const double low)
 {
+   const bool news_win = (!g_asrc_replay && SHT_NewsBlocks(t));
+   bool held = false;
    for(int i = 0; i < ASRC_MAX_LEGS; i++)
    {
       if(!g_asrc_legs[i].on)
          continue;
       if(t <= g_asrc_legs[i].bar_time)
          continue;
+      if(news_win && SHT_NewsYoung(g_asrc_legs[i].bar_time, t))
+      {
+         held = true;
+         continue;
+      }
       if(g_asrc_legs[i].side > 0)
       {
          if(high >= g_asrc_legs[i].tp)
@@ -295,6 +303,69 @@ void ASRC_Manage(const datetime t, const double high, const double low)
          else if(high >= g_asrc_legs[i].sl)
             ASRC_ShadowClose(i, t, g_asrc_legs[i].sl, "stop");
       }
+   }
+   if(held)
+      SHT_Info("hold through news window — no shadow close");
+}
+      if(g_asrc_legs[i].side > 0)
+      {
+         if(high >= g_asrc_legs[i].tp)
+            ASRC_ShadowClose(i, t, g_asrc_legs[i].tp, "tp");
+         else if(low <= g_asrc_legs[i].sl)
+            ASRC_ShadowClose(i, t, g_asrc_legs[i].sl, "stop");
+      }
+      else
+      {
+         if(low <= g_asrc_legs[i].tp)
+            ASRC_ShadowClose(i, t, g_asrc_legs[i].tp, "tp");
+         else if(high >= g_asrc_legs[i].sl)
+            ASRC_ShadowClose(i, t, g_asrc_legs[i].sl, "stop");
+      }
+   }
+}
+
+void ASRC_EodFlatten(const datetime t, const double px)
+{
+   const bool news_win = (!g_asrc_replay && SHT_NewsBlocks(t));
+   for(int i = 0; i < ASRC_MAX_LEGS; i++)
+   {
+      if(!g_asrc_legs[i].on)
+         continue;
+      if(news_win && SHT_NewsYoung(g_asrc_legs[i].bar_time, t))
+         continue;
+      ASRC_ShadowClose(i, t, px, "eod");
+   }
+}
+
+// Pre-print flatten for legs younger than the 5h swing exception.
+void ASRC_NewsTickFlatten()
+{
+   if(g_asrc_replay)
+      return;
+
+   datetime oldest = 0;
+   for(int i = 0; i < ASRC_MAX_LEGS; i++)
+   {
+      if(!g_asrc_legs[i].on)
+         continue;
+      if(!SHT_NewsYoung(g_asrc_legs[i].bar_time, TimeCurrent()))
+         continue;
+      if(oldest == 0 || g_asrc_legs[i].bar_time < oldest)
+         oldest = g_asrc_legs[i].bar_time;
+   }
+   if(oldest <= 0)
+      return;
+   if(!SHT_NewsShouldFlatten(oldest, TimeCurrent()))
+      return;
+
+   const datetime now = TimeCurrent();
+   const double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   for(int i = 0; i < ASRC_MAX_LEGS; i++)
+   {
+      if(!g_asrc_legs[i].on)
+         continue;
+      if(SHT_NewsYoung(g_asrc_legs[i].bar_time, now))
+         ASRC_ShadowClose(i, now, bid, "news_flatten");
    }
 }
 
@@ -403,7 +474,7 @@ bool ASRC_EngineOnBar(const int shift, const bool replay)
 
    if(s.eod && ASRC_OpenCount() > 0)
    {
-      ASRC_FlattenAll(t, s.close, "eod");
+      ASRC_EodFlatten(t, s.close);
       return true;
    }
 
@@ -430,6 +501,13 @@ bool ASRC_EngineOnBar(const int shift, const bool replay)
    const bool short_ok =
       s.bias_short && s.in_channel && short_pat && s.rsi_sell
       && (s.ema_sell || pin_bear) && s.sqz_short && s.ht_sell;
+
+   if(!replay && SHT_NewsBlocks(t))
+   {
+      if(long_ok || short_ok)
+         SHT_Info("skip entry: news window " + SHT_NewsLine());
+      return true;
+   }
 
    const int n = ASRC_OpenCount();
    const bool flat = (n == 0);
@@ -513,6 +591,7 @@ string ASRC_EngineComment(const ASRCSnap &s)
    return ASRC_Line(s)
           + "\n" + ASRC_PosLine()
           + "\n" + SHT_RiskLine(ASRC_NowFloating())
+          + "\n" + SHT_NewsLine()
           + "\nshadow only — no OrderSend  halt local (not shared with Vegas)";
 }
 
