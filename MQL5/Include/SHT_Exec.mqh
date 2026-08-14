@@ -158,7 +158,10 @@ ulong SHT_ExecPositionFromDeal()
       return 0;
    if(!HistoryDealSelect(deal))
       return 0;
-   return (ulong)HistoryDealGetInteger(DEAL_POSITION_ID);
+   long pos_id = 0;
+   if(!HistoryDealGetInteger(deal, DEAL_POSITION_ID, pos_id) || pos_id <= 0)
+      return 0;
+   return (ulong)pos_id;
 }
 
 ulong SHT_ExecNewestTicket()
