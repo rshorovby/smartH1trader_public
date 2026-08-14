@@ -1,12 +1,13 @@
 #property copyright   "rshorovby"
 #property link        "https://github.com/rshorovby/smartH1trader_public"
-#property version     "0.50"
-#property description "Personal BTCUSD M5 EA. ASRC shadow + 0.5% risk + USD news; no broker orders."
+#property version     "0.60"
+#property description "Personal BTCUSD M5 EA. ASRC live orders behind InpEnableTrading."
 
 #include "../Include/ASRC_Config.mqh"
 #include "../Include/SHT_Log.mqh"
 #include "../Include/SHT_Risk.mqh"
 #include "../Include/SHT_News.mqh"
+#include "../Include/SHT_Exec.mqh"
 #include "../Include/ASRC_Channel.mqh"
 #include "../Include/ASRC_Engine.mqh"
 
@@ -14,8 +15,9 @@ input group "Safety"
 input string          InpAllowedSymbol  = "BTCUSD";
 input ENUM_TIMEFRAMES InpAllowedTF      = PERIOD_M5;
 input long            InpMagic          = 26081302;
-input bool            InpEnableTrading  = false;   // v0.50 never sends orders
+input bool            InpEnableTrading  = false;   // true = real orders (SL on broker)
 input bool            InpLogToFile      = true;
+input int             InpDeviation      = 500;     // max slippage in points (BTC point is 0.01)
 
 input group "Risk"
 input double          InpRiskPct        = 0.5;     // percent of equity per leg
@@ -46,7 +48,7 @@ void ASRC_Paint(const string extra)
    Comment(
       "AsrcBtc " + ASRC_VERSION + "\n"
       + "symbol " + _Symbol + "  " + EnumToString((ENUM_TIMEFRAMES)_Period) + "\n"
-      + "trading OFF  orders blocked\n"
+      + "trading " + (g_live ? "LIVE" : "OFF") + "\n"
       + extra
    );
 }
@@ -125,8 +127,19 @@ int OnInit()
       return INIT_FAILED;
    }
 
-   if(InpEnableTrading)
-      SHT_Warn("InpEnableTrading=true but v0.50 has no OrderSend - shadow only");
+   SHT_ExecInit(InpMagic, InpDeviation, InpEnableTrading);
+   if(g_live && !SHT_ExecAllowed())
+   {
+      SHT_Error("live trading requested but " + g_risk_why);
+      ASRC_Release();
+      return INIT_FAILED;
+   }
+   if(g_live && !SHT_ExecIsHedge())
+      SHT_Warn("account is netting — a second same-side ASRC leg will not be sent live");
+   if(g_live)
+      SHT_Warn("LIVE ORDERS ARMED - broker SL/TP per leg, 0.5% risk, news flatten");
+   else
+      SHT_Info("shadow mode - set InpEnableTrading=true to send orders");
 
    g_chart_ok = true;
    ASRC_Paint("handles created, waiting for M15/H1 warmup then replay");
@@ -161,12 +174,15 @@ void OnTick()
       ASRC_EngineReplay();
       g_replay_done = true;
       g_last_bar = iTime(_Symbol, InpAllowedTF, 0);
+      ASRC_LiveAfterReplay();
       SHT_NewsPoll();
       ASRC_RefreshComment();
       return;
    }
 
    SHT_NewsPoll();
+   ASRC_LiveTick();
+
    if(ASRC_OpenCount() > 0)
    {
       const int before = ASRC_OpenCount();

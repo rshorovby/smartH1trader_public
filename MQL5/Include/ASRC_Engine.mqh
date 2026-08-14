@@ -5,6 +5,7 @@
 #include "SHT_Log.mqh"
 #include "SHT_Risk.mqh"
 #include "SHT_News.mqh"
+#include "SHT_Exec.mqh"
 #include "ASRC_Channel.mqh"
 
 // Alpha S/R Channel — same numbers as backtest_alpha_sr_channel.py (BTC tick 0.01).
@@ -39,6 +40,7 @@ struct ASRCLeg
    double   risk;
    double   lots;
    double   risk_money;
+   ulong    ticket;
 };
 
 ASRCLeg  g_asrc_legs[ASRC_MAX_LEGS];
@@ -239,6 +241,11 @@ void ASRC_ShadowClose(const int idx, const datetime t, const double px, const st
    ASRCLeg leg = g_asrc_legs[idx];
    if(!leg.on)
       return;
+   if(g_live && !g_asrc_replay && leg.ticket != 0)
+   {
+      if(!SHT_ExecCloseTicket(leg.ticket))
+         return;
+   }
    const double r = (leg.side > 0)
                     ? (px - leg.entry) / leg.risk
                     : (leg.entry - px) / leg.risk;
@@ -248,13 +255,15 @@ void ASRC_ShadowClose(const int idx, const datetime t, const double px, const st
    ASRC_Mark("X" + IntegerToString(leg.id), t, px, 251,
              (r > 0.0 ? clrLimeGreen : clrOrangeRed));
    if(!g_asrc_replay)
-      SHT_Info("shadow close #" + IntegerToString(leg.id)
+      SHT_Info((g_live ? "LIVE " : "shadow ")
+               + "close #" + IntegerToString(leg.id)
                + " " + (leg.side > 0 ? "long" : "short")
                + " " + reason
                + " exit=" + DoubleToString(px, _Digits)
                + " R=" + DoubleToString(r, 3)
                + " which=" + IntegerToString(leg.which)
-               + " lots=" + DoubleToString(leg.lots, 2));
+               + " lots=" + DoubleToString(leg.lots, 2)
+               + (leg.ticket != 0 ? (" ticket=" + IntegerToString((long)leg.ticket)) : ""));
    else
       SHT_Info("replay close #" + IntegerToString(leg.id)
                + " " + (leg.side > 0 ? "long" : "short")
@@ -306,22 +315,6 @@ void ASRC_Manage(const datetime t, const double high, const double low)
    }
    if(held)
       SHT_Info("hold through news window — no shadow close");
-}
-      if(g_asrc_legs[i].side > 0)
-      {
-         if(high >= g_asrc_legs[i].tp)
-            ASRC_ShadowClose(i, t, g_asrc_legs[i].tp, "tp");
-         else if(low <= g_asrc_legs[i].sl)
-            ASRC_ShadowClose(i, t, g_asrc_legs[i].sl, "stop");
-      }
-      else
-      {
-         if(low <= g_asrc_legs[i].tp)
-            ASRC_ShadowClose(i, t, g_asrc_legs[i].tp, "tp");
-         else if(high >= g_asrc_legs[i].sl)
-            ASRC_ShadowClose(i, t, g_asrc_legs[i].sl, "stop");
-      }
-   }
 }
 
 void ASRC_EodFlatten(const datetime t, const double px)
@@ -419,38 +412,150 @@ void ASRC_ShadowOpen(const ASRCSnap &s, const int side, const int which, const d
       return;
    }
 
-   const double eq = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(g_live && !g_asrc_replay)
+   {
+      if(which == 2 && !SHT_ExecIsHedge())
+      {
+         SHT_Info("skip second live leg: account is netting, not hedging");
+         return;
+      }
+      if(SHT_ExecCount() >= ASRC_MAX_LEGS)
+      {
+         SHT_Info("skip live open: already " + IntegerToString(ASRC_MAX_LEGS) + " broker tickets");
+         return;
+      }
+   }
+
    g_asrc_trade_id++;
+   ulong ticket = 0;
+   double entry_px = s.close;
+   if(g_live && !g_asrc_replay)
+   {
+      const string note = "ASRC#" + IntegerToString(g_asrc_trade_id);
+      ticket = SHT_ExecSend(side, lots, sl, tp, note);
+      if(ticket == 0)
+      {
+         SHT_Info("skip live open #" + IntegerToString(g_asrc_trade_id) + ": " + g_risk_why);
+         g_asrc_trade_id--;
+         return;
+      }
+      if(SHT_ExecSelectTicket(ticket))
+         entry_px = PositionGetDouble(POSITION_PRICE_OPEN);
+      const double filled_risk = (side > 0) ? (entry_px - sl) : (sl - entry_px);
+      if(filled_risk > 0.0)
+         risk = filled_risk;
+   }
+
+   const double eq = AccountInfoDouble(ACCOUNT_EQUITY);
    g_asrc_legs[slot].on         = true;
    g_asrc_legs[slot].side       = side;
    g_asrc_legs[slot].which      = which;
    g_asrc_legs[slot].id         = g_asrc_trade_id;
    g_asrc_legs[slot].bar_time   = s.bar_time;
-   g_asrc_legs[slot].entry      = s.close;
+   g_asrc_legs[slot].entry      = entry_px;
    g_asrc_legs[slot].sl         = sl;
    g_asrc_legs[slot].tp         = tp;
    g_asrc_legs[slot].risk       = risk;
    g_asrc_legs[slot].lots       = lots;
    g_asrc_legs[slot].risk_money = eq * g_risk_pct;
+   g_asrc_legs[slot].ticket     = ticket;
    g_asrc_last_entry            = s.bar_time;
    if(which == 1)
       g_asrc_session_n++;
 
-   ASRC_Mark("E" + IntegerToString(g_asrc_trade_id), s.bar_time, s.close,
+   ASRC_Mark("E" + IntegerToString(g_asrc_trade_id), s.bar_time, entry_px,
              (side > 0 ? 233 : 234),
              (side > 0 ? clrDodgerBlue : clrOrchid));
    if(!g_asrc_replay)
       ASRC_LevelsDraw();
-   SHT_Info((g_asrc_replay ? "replay " : "shadow ")
+   SHT_Info((g_asrc_replay ? "replay " : (g_live ? "LIVE " : "shadow "))
             + "open #" + IntegerToString(g_asrc_trade_id)
             + " " + (side > 0 ? "long" : "short")
             + " which=" + IntegerToString(which)
             + " " + g_asrc_last_pat
-            + " entry=" + DoubleToString(s.close, _Digits)
+            + " entry=" + DoubleToString(entry_px, _Digits)
             + " sl=" + DoubleToString(sl, _Digits)
             + " tp=" + DoubleToString(tp, _Digits)
             + " r=" + DoubleToString(risk, _Digits)
-            + " lots=" + DoubleToString(lots, 2));
+            + " lots=" + DoubleToString(lots, 2)
+            + (ticket != 0 ? (" ticket=" + IntegerToString((long)ticket)) : ""));
+}
+
+void ASRC_PaperDrop(const string why)
+{
+   if(ASRC_OpenCount() == 0)
+      return;
+   SHT_Info("drop paper legs: " + why);
+   ASRC_LegsClear();
+   ASRC_LevelsDraw();
+}
+
+void ASRC_LiveAfterReplay()
+{
+   if(!g_live)
+      return;
+
+   ASRC_PaperDrop("replay paper was not sent to the broker");
+   g_asrc_session_n  = 0;
+   g_asrc_last_entry = 0;
+
+   int slot = 0;
+   for(int i = PositionsTotal() - 1; i >= 0 && slot < ASRC_MAX_LEGS; i--)
+   {
+      const ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != g_magic)
+         continue;
+
+      const int side = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? 1 : -1;
+      const double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+      const double sl    = PositionGetDouble(POSITION_SL);
+      const double tp    = PositionGetDouble(POSITION_TP);
+      double risk = MathAbs(entry - sl);
+      if(risk <= 0.0)
+         risk = entry * 0.002;
+
+      g_asrc_trade_id++;
+      g_asrc_legs[slot].on         = true;
+      g_asrc_legs[slot].side       = side;
+      g_asrc_legs[slot].which      = slot + 1;
+      g_asrc_legs[slot].id         = g_asrc_trade_id;
+      g_asrc_legs[slot].bar_time   = (datetime)PositionGetInteger(POSITION_TIME);
+      g_asrc_legs[slot].entry      = entry;
+      g_asrc_legs[slot].sl         = sl;
+      g_asrc_legs[slot].tp         = tp;
+      g_asrc_legs[slot].risk       = risk;
+      g_asrc_legs[slot].lots       = PositionGetDouble(POSITION_VOLUME);
+      g_asrc_legs[slot].risk_money = AccountInfoDouble(ACCOUNT_EQUITY) * g_risk_pct;
+      g_asrc_legs[slot].ticket     = ticket;
+      g_asrc_session_n++;
+      slot++;
+      SHT_Warn("adopted LIVE ticket=" + IntegerToString((long)ticket)
+               + " " + (side > 0 ? "long" : "short")
+               + " lots=" + DoubleToString(g_asrc_legs[slot - 1].lots, 2));
+   }
+   ASRC_LevelsDraw();
+}
+
+void ASRC_LiveTick()
+{
+   if(!g_live || g_asrc_replay)
+      return;
+   const datetime now = TimeCurrent();
+   const double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   const double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   for(int i = 0; i < ASRC_MAX_LEGS; i++)
+   {
+      if(!g_asrc_legs[i].on || g_asrc_legs[i].ticket == 0)
+         continue;
+      if(SHT_ExecSelectTicket(g_asrc_legs[i].ticket))
+         continue;
+      const double px = (g_asrc_legs[i].side > 0 ? bid : ask);
+      ASRC_ShadowClose(i, now, px, "broker_exit");
+   }
 }
 
 bool ASRC_EngineOnBar(const int shift, const bool replay)
@@ -580,7 +685,10 @@ string ASRC_PosLine()
               + " sl=" + DoubleToString(g_asrc_legs[i].sl, _Digits)
               + " tp=" + DoubleToString(g_asrc_legs[i].tp, _Digits)
               + " lots=" + DoubleToString(g_asrc_legs[i].lots, 2)
-              + " w" + IntegerToString(g_asrc_legs[i].which);
+              + " w" + IntegerToString(g_asrc_legs[i].which)
+              + (g_asrc_legs[i].ticket != 0
+                 ? (" t=" + IntegerToString((long)g_asrc_legs[i].ticket))
+                 : "");
    }
    return line + "  closed=" + IntegerToString(g_asrc_closed_n)
           + "  session=" + IntegerToString(g_asrc_session_n) + "/" + IntegerToString(ASRC_MAX_FIRST);
@@ -592,7 +700,8 @@ string ASRC_EngineComment(const ASRCSnap &s)
           + "\n" + ASRC_PosLine()
           + "\n" + SHT_RiskLine(ASRC_NowFloating())
           + "\n" + SHT_NewsLine()
-          + "\nshadow only — no OrderSend  halt local (not shared with Vegas)";
+          + "\n" + (g_live ? "LIVE orders  halt local (not shared with Vegas)"
+                           : "shadow only — no OrderSend  halt local (not shared with Vegas)");
 }
 
 #endif

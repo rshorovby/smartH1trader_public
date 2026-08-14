@@ -114,15 +114,81 @@ ulong SHT_ExecTicket()
    return (ulong)PositionGetInteger(POSITION_TICKET);
 }
 
-bool SHT_ExecOpen(const int side, const double lots, const double sl, const double tp)
+bool SHT_ExecIsHedge()
+{
+   return (AccountInfoInteger(ACCOUNT_MARGIN_MODE) == ACCOUNT_MARGIN_MODE_RETAIL_HEDGING);
+}
+
+int SHT_ExecCount()
+{
+   int n = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      const ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != g_magic)
+         continue;
+      n++;
+   }
+   return n;
+}
+
+bool SHT_ExecSelectTicket(const ulong ticket)
+{
+   if(ticket == 0)
+      return false;
+   if(!PositionSelectByTicket(ticket))
+      return false;
+   if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+      return false;
+   if(PositionGetInteger(POSITION_MAGIC) != g_magic)
+      return false;
+   return true;
+}
+
+ulong SHT_ExecPositionFromDeal()
+{
+   const ulong deal = g_sht_trade.ResultDeal();
+   if(deal == 0)
+      return 0;
+   if(!HistorySelect(TimeCurrent() - 180, TimeCurrent() + 5))
+      return 0;
+   if(!HistoryDealSelect(deal))
+      return 0;
+   return (ulong)HistoryDealGetInteger(DEAL_POSITION_ID);
+}
+
+ulong SHT_ExecNewestTicket()
+{
+   ulong    best   = 0;
+   datetime newest = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      const ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC) != g_magic)
+         continue;
+      const datetime t = (datetime)PositionGetInteger(POSITION_TIME);
+      if(t >= newest)
+      {
+         newest = t;
+         best   = ticket;
+      }
+   }
+   return best;
+}
+
+ulong SHT_ExecSend(const int side, const double lots, const double sl, const double tp,
+                   const string note)
 {
    if(!SHT_ExecAllowed())
-      return false;
-   if(SHT_ExecHasPos())
-   {
-      g_risk_why = "already in a position";
-      return false;
-   }
+      return 0;
 
    const double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    const double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -132,10 +198,9 @@ bool SHT_ExecOpen(const int side, const double lots, const double sl, const doub
    if(!SHT_StopDistanceOk(side, px, sln))
    {
       g_risk_why = "SL inside stop level";
-      return false;
+      return 0;
    }
 
-   const string note = "SHT";
    bool ok = false;
    if(side > 0)
       ok = g_sht_trade.Buy(lots, _Symbol, 0.0, sln, tpn, note);
@@ -147,14 +212,61 @@ bool SHT_ExecOpen(const int side, const double lots, const double sl, const doub
       g_risk_why = "OrderSend failed retcode=" + IntegerToString(g_sht_trade.ResultRetcode())
                    + " " + g_sht_trade.ResultComment();
       SHT_Error(g_risk_why);
-      return false;
+      return 0;
    }
-   g_open_lots = lots;
+
+   ulong ticket = SHT_ExecPositionFromDeal();
+   for(int w = 0; w < 20 && ticket == 0; w++)
+   {
+      Sleep(50);
+      ticket = SHT_ExecPositionFromDeal();
+      if(ticket == 0)
+         ticket = SHT_ExecNewestTicket();
+   }
+   if(ticket == 0)
+   {
+      g_risk_why = "LIVE open sent but no position appeared";
+      SHT_Error(g_risk_why);
+      return 0;
+   }
+
    SHT_Info("LIVE open " + (side > 0 ? "buy" : "sell")
             + " lots=" + DoubleToString(lots, 2)
             + " sl=" + DoubleToString(sln, _Digits)
             + (tpn > 0.0 ? (" tp=" + DoubleToString(tpn, _Digits)) : " tp=none")
-            + " deal=" + IntegerToString(g_sht_trade.ResultDeal()));
+            + " ticket=" + IntegerToString((long)ticket)
+            + " " + note);
+   return ticket;
+}
+
+bool SHT_ExecOpen(const int side, const double lots, const double sl, const double tp)
+{
+   if(SHT_ExecHasPos())
+   {
+      g_risk_why = "already in a position";
+      return false;
+   }
+   const ulong ticket = SHT_ExecSend(side, lots, sl, tp, "SHT");
+   if(ticket == 0)
+      return false;
+   g_open_lots = lots;
+   return true;
+}
+
+bool SHT_ExecCloseTicket(const ulong ticket)
+{
+   if(ticket == 0)
+      return true;
+   if(!SHT_ExecSelectTicket(ticket))
+      return true;
+   if(!g_sht_trade.PositionClose(ticket))
+   {
+      SHT_Error("LIVE close failed ticket=" + IntegerToString((long)ticket)
+                + " retcode=" + IntegerToString(g_sht_trade.ResultRetcode())
+                + " " + g_sht_trade.ResultComment());
+      return false;
+   }
+   SHT_Info("LIVE close ticket=" + IntegerToString((long)ticket));
    return true;
 }
 
@@ -162,15 +274,7 @@ bool SHT_ExecClose()
 {
    if(!SHT_ExecHasPos())
       return true;
-   const ulong ticket = SHT_ExecTicket();
-   if(!g_sht_trade.PositionClose(ticket))
-   {
-      SHT_Error("LIVE close failed retcode=" + IntegerToString(g_sht_trade.ResultRetcode())
-                + " " + g_sht_trade.ResultComment());
-      return false;
-   }
-   SHT_Info("LIVE close ticket=" + IntegerToString((long)ticket));
-   return true;
+   return SHT_ExecCloseTicket(SHT_ExecTicket());
 }
 
 bool SHT_ExecCloseFrac(const double frac)

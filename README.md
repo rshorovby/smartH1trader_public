@@ -12,7 +12,7 @@ This repository is the source of truth for the live bots. Research, broker dumps
 
 ### AsrcBtc — Alpha S/R Channel BTCUSD M5
 
-**v0.50 — shadow + 0.5% risk + USD red news ±7 minutes.** Same entries as v0.40. Flatten young shadow legs before the print; 5h swing exception holds. Halt is **not** shared with Vegas. Magic `26081302`. Keep `InpEnableTrading = false`.
+**v0.60 — live orders behind `InpEnableTrading` (default off).** Alpha S/R Channel on BTCUSD M5. 0.5% risk per same-side leg, local halt −2%, USD red news ±7 minutes. Two tickets only on a hedging account; netting skips the second live leg. Magic `26081302`. Halt is **not** shared with Vegas.
 
 ## Layout
 
@@ -34,14 +34,16 @@ MQL5/Include/ASRC_Engine.mqh     // shadow entries / SL / TP / EOD
 
 Relative includes (`../Include/...`) resolve when the repo tree is copied as-is into the terminal `MQL5` directory.
 
-## Going live (Vegas only)
+## Going live
+
+Both experts default to shadow (`InpEnableTrading = false`). Arm one at a time. Do not run both live without a combined daily cap.
 
 1. Comment must show upcoming USD news (`news next ...`), not `calendar EMPTY`.
 2. Enable the AutoTrading button (Algo Trading).
 3. In EA inputs set `InpEnableTrading = true`. Re-attach. Experts should log `LIVE ORDERS ARMED`.
-4. Comment says `trading LIVE`. The next H1 signal can place a real order. SL is on the broker even if Wine/MT5 dies.
+4. Comment says `trading LIVE`. SL/TP sit on the broker even if Wine/MT5 dies.
 
-Leave `InpEnableTrading = false` to stay in shadow mode. **AsrcBtc must stay false** until the live-order layer exists. Comment should show `news next ...`, not `calendar EMPTY`.
+Vegas: attach `SmartH1Trader` to **XAUUSD H1**. ASRC: attach `AsrcBtc` to **BTCUSD M5**. ASRC legs are the same direction (not a hedge). A second live leg needs a hedging account.
 
 ## Roadmap
 
@@ -53,5 +55,5 @@ ASRC BTCUSD M5:
 2. M15 channel + M5/H1 filters
 3. Shadow entries / SL / TP
 4. Risk 0.5% + daily halt (shared account halt comes later)
-5. USD news window *(this version)*
-6. Broker orders
+5. USD news window
+6. Broker orders *(this version)*
