@@ -587,6 +587,10 @@ bool ASRC_EngineOnBar(const int shift, const bool replay)
 
    if(s.no_trade || s.friday || g_asrc_session_n >= ASRC_MAX_FIRST)
       return true;
+   if(g_asrc_skip_monday && s.monday)
+      return true;
+   if(g_asrc_skip_asia && s.asia)
+      return true;
    if(!ASRC_BarsGapOk(shift))
       return true;
    if(ASRC_OpenCount() >= ASRC_MAX_LEGS)
@@ -700,6 +704,10 @@ string ASRC_EngineComment(const ASRCSnap &s)
           + "\n" + ASRC_PosLine()
           + "\n" + SHT_RiskLine(ASRC_NowFloating())
           + "\n" + SHT_NewsLine()
+          + "\nfilters"
+          + (g_asrc_skip_monday ? " skipMon" : "")
+          + (g_asrc_skip_asia ? " skipAsia20-04NY" : "")
+          + ((!g_asrc_skip_monday && !g_asrc_skip_asia) ? " off" : "")
           + "\n" + (g_live ? "LIVE orders  halt local (not shared with Vegas)"
                            : "shadow only — no OrderSend  halt local (not shared with Vegas)");
 }

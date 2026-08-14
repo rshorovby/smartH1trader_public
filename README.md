@@ -12,7 +12,7 @@ This repository is the source of truth for the live bots. Research, broker dumps
 
 ### AsrcBtc — Alpha S/R Channel BTCUSD M5
 
-**v0.60 — live orders behind `InpEnableTrading` (default off).** Alpha S/R Channel on BTCUSD M5. 0.5% risk per same-side leg, local halt −2%, USD red news ±7 minutes. Two tickets only on a hedging account; netting skips the second live leg. Magic `26081302`. Halt is **not** shared with Vegas.
+**v0.61 — live orders behind `InpEnableTrading` (default off).** Alpha S/R Channel on BTCUSD M5. 0.5% risk per same-side leg, local halt −2%, USD red news ±7 minutes. **Skip NY Monday** on by default (in-sample: n 155→121, E[R] +0.39→+0.50, DD 7.2→5.2). `InpSkipAsiaNy` is off here — use it on XAG (20:00–03:59 NY). Two tickets only on a hedging account. Magic `26081302`. Halt is **not** shared with Vegas.
 
 ## Layout
 
@@ -56,4 +56,5 @@ ASRC BTCUSD M5:
 3. Shadow entries / SL / TP
 4. Risk 0.5% + daily halt (shared account halt comes later)
 5. USD news window
-6. Broker orders *(this version)*
+6. Broker orders
+7. Session filters *(this version: skip Monday on BTC)*

@@ -41,12 +41,16 @@ struct ASRCSnap
    bool     sqz_short;
    bool     low_vol;
    bool     friday;
+   bool     monday;
+   bool     asia;          // NY 20:00–03:59
    bool     no_trade;
    bool     session_reset;
    bool     eod;
    bool     valid;
 };
 
+bool g_asrc_skip_monday = false;
+bool g_asrc_skip_asia   = false;
 int  g_asrc_h_ch  = INVALID_HANDLE;
 int  g_asrc_h_ht  = INVALID_HANDLE;
 int  g_asrc_h_ltf = INVALID_HANDLE;
@@ -323,6 +327,8 @@ bool ASRC_Read(ASRCSnap &s, const int shift)
    MqlDateTime ny;
    ASRC_NyStamp(s.bar_time, ny);
    s.friday = (ny.day_of_week == 5);
+   s.monday = (ny.day_of_week == 1);
+   s.asia   = (ny.hour >= 20 || ny.hour < 4);
    const int mins = ny.hour * 60 + ny.min;
    s.no_trade = (mins >= (16 * 60 + 45) && mins <= (19 * 60 + 5));
    s.session_reset = ((ny.hour == 9 && ny.min == 30)
@@ -349,6 +355,8 @@ string ASRC_Line(const ASRCSnap &s)
           + " bbw=" + DoubleToString(s.bb_width, 4)
           + (s.low_vol ? " LOWVOL" : "")
           + (s.friday ? " FRI" : "")
+          + (s.monday ? " MON" : "")
+          + (s.asia ? " ASIA" : "")
           + (s.no_trade ? " NT" : "");
 }
 

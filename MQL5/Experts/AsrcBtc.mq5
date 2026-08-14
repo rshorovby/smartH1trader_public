@@ -1,7 +1,7 @@
 #property copyright   "rshorovby"
 #property link        "https://github.com/rshorovby/smartH1trader_public"
-#property version     "0.60"
-#property description "Personal BTCUSD M5 EA. ASRC live orders behind InpEnableTrading."
+#property version     "0.61"
+#property description "Personal BTCUSD M5 EA. ASRC live orders; skip Monday NY."
 
 #include "../Include/ASRC_Config.mqh"
 #include "../Include/SHT_Log.mqh"
@@ -27,6 +27,10 @@ input group "News"
 input bool            InpNewsFilter     = true;
 input int             InpNewsBufferMin  = 7;       // minutes each side of red USD (FP is 5)
 input int             InpNewsHoldHours  = 5;       // FP swing exception: hold if opened this long before
+
+input group "Filters"
+input bool            InpSkipMonday     = true;    // BTC: skip NY Monday entries
+input bool            InpSkipAsiaNy     = false;   // XAG: skip NY 20:00-03:59; leave off on BTC
 
 datetime g_last_bar    = 0;
 datetime g_last_ui     = 0;
@@ -119,6 +123,8 @@ int OnInit()
    g_news_enabled    = InpNewsFilter;
    g_news_buffer_sec = InpNewsBufferMin * 60;
    g_news_hold_sec   = InpNewsHoldHours * 3600;
+   g_asrc_skip_monday = InpSkipMonday;
+   g_asrc_skip_asia   = InpSkipAsiaNy;
 
    if(!ASRC_Init(_Symbol))
    {
@@ -145,7 +151,9 @@ int OnInit()
    ASRC_Paint("handles created, waiting for M15/H1 warmup then replay");
    SHT_Info("ASRC risk " + DoubleToString(InpRiskPct, 2) + "% per leg, local halt -"
             + DoubleToString(InpDailyHaltPct, 1) + "%, news +/-"
-            + IntegerToString(InpNewsBufferMin) + "m USD");
+            + IntegerToString(InpNewsBufferMin) + "m USD"
+            + (InpSkipMonday ? " skipMon" : "")
+            + (InpSkipAsiaNy ? " skipAsia20-04NY" : ""));
    return INIT_SUCCEEDED;
 }
 
