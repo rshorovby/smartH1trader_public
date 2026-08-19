@@ -45,6 +45,17 @@ double SHT_NormalizeLots(double lots)
    return NormalizeDouble(lots, digits);
 }
 
+double SHT_LossMoneyForLots(const int side, const double lots, const double entry, const double sl)
+{
+   if(lots <= 0.0 || entry <= 0.0 || sl <= 0.0)
+      return 0.0;
+   double profit = 0.0;
+   const ENUM_ORDER_TYPE typ = (side > 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+   if(!OrderCalcProfit(typ, _Symbol, lots, entry, sl, profit))
+      return 0.0;
+   return MathMax(0.0, -profit);
+}
+
 double SHT_LotsForStop(const double sl_distance)
 {
    const double equity     = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -65,6 +76,47 @@ double SHT_LotsForStop(const double sl_distance)
       return 0.0;
    }
    return lots;
+}
+
+double SHT_LotsForStopLive(const int side, const double entry, const double sl)
+{
+   const double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   const double risk_money = equity * g_risk_pct;
+   const double vmin = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   const double vmax = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   const double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   if(equity <= 0.0 || risk_money <= 0.0 || vmin <= 0.0 || step <= 0.0)
+   {
+      g_risk_why = "no equity / volume step";
+      return 0.0;
+   }
+
+   double lo = vmin;
+   double hi = vmax;
+   double best = 0.0;
+   for(int i = 0; i < 32; i++)
+   {
+      const double mid = SHT_NormalizeLots((lo + hi) * 0.5);
+      if(mid <= 0.0)
+         break;
+      const double loss = SHT_LossMoneyForLots(side, mid, entry, sl);
+      if(loss <= risk_money + 1e-6)
+      {
+         best = mid;
+         lo = mid + step;
+      }
+      else
+         hi = mid - step;
+   }
+
+   if(best <= 0.0)
+   {
+      const double min_loss = SHT_LossMoneyForLots(side, vmin, entry, sl);
+      g_risk_why = "min lot risks " + DoubleToString(min_loss, 2)
+                   + " > target " + DoubleToString(risk_money, 2);
+      return 0.0;
+   }
+   return best;
 }
 
 void SHT_RiskResetDay(const datetime t)
@@ -136,6 +188,38 @@ bool SHT_RiskCanEnter(const datetime t, const bool replay, const double sl_dista
       g_day_skips++;
       return false;
    }
+   g_risk_why = "";
+   return true;
+}
+
+bool SHT_RiskCanEnterLive(const datetime t, const bool replay, const int side,
+                          const double entry, const double sl, const double floating,
+                          double &lots)
+{
+   lots = 0.0;
+   SHT_RiskOnBar(t);
+   if(replay)
+      return SHT_RiskCanEnter(t, replay, MathAbs(entry - sl), floating, lots);
+
+   if(SHT_RiskHalted(floating))
+   {
+      g_day_skips++;
+      return false;
+   }
+
+   lots = SHT_LotsForStopLive(side, entry, sl);
+   if(lots <= 0.0)
+      return false;
+
+   const double loss = SHT_LossMoneyForLots(side, lots, entry, sl);
+   const double risk_money = AccountInfoDouble(ACCOUNT_EQUITY) * g_risk_pct;
+   if(loss > risk_money + 0.01)
+   {
+      g_risk_why = "calc risk " + DoubleToString(loss, 2)
+                   + " > target " + DoubleToString(risk_money, 2);
+      return false;
+   }
+
    g_risk_why = "";
    return true;
 }
